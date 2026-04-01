@@ -535,63 +535,41 @@ jobs:
           set -euo pipefail
 
           if [[ "${ATTEMPT}" -eq 1 ]]; then
-            HEADER="## 🤖 Copilot: Fix CI Failures (Attempt #${ATTEMPT})"
+            HEADER="## 🤖 Copilot: Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
             CONTEXT=$(cat <<FIRST_ATTEMPT
-          This is the **first** automated fix attempt.
+          This is the **first** automated fix attempt. Keep changes minimal and focused only on making CI green.
 
-          ### ⚠️ Constraints (apply to ALL attempts)
-          - **Do not modify more than 10 files** in a single PR.
-          - **Do not add or remove gems** from the Gemfile; only adapt code and tests to the new gem versions from this Dependabot PR.
-          - **Do not downgrade any dependency** — work with the versions Dependabot introduced.
-          - **Keep your changes minimal** — only touch what is strictly necessary to make CI green.
-          - **Do not refactor unrelated code** or introduce new features, tests, or checks.
+          **Constraints**
+          - Do not modify more than 10 files.
+          - Do not add or remove gems; adapt code/tests to the Dependabot versions.
+          - Do not downgrade dependencies.
+          - Avoid refactors or new features/tests unrelated to the fix.
           FIRST_ATTEMPT
           )
           elif [[ "${STALL_STREAK}" -ge "${MAX_STALL_ATTEMPTS}" ]]; then
-            HEADER="## 🚨 Copilot: ESCALATED — Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
+            HEADER="## 🚩 Escalated Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
             CONTEXT=$(cat <<ESCALATION
-          **⚠️ CRITICAL: Your previous ${STALL_STREAK} fix attempts made ZERO progress.** The same number of jobs and error signatures are still failing. Your prior approach is **not working**.
+          **Stall streak ${STALL_STREAK}/${MAX_STALL_ATTEMPTS}: no improvement in failed jobs/error signatures. Change strategy now.** Stop editing the same spots; follow stack traces and gem migration notes. Be surgical (≤8 files) and avoid repeating prior edits.
 
-          ### 🛑 MANDATORY: Change your strategy
-
-          1. **Stop touching the same files** unless the stack trace explicitly points to them. Your previous edits to those files did not help — doing it again will not help either.
-          2. **Trace the full call stack.** Follow the error stack traces end-to-end. The root cause is likely in a **different file or code path** than where the error surfaces. Look at callers, initializers, and config files upstream of the error.
-          3. **Read the gem's release notes.** Go to the upgraded gem's CHANGELOG, release notes, or migration guide. Look for:
-             - Renamed/removed methods or classes
-             - Changed method signatures (new required args, removed kwargs)
-             - Deprecated APIs that were finally removed
-             - New required configuration or initializer changes
-          4. **Consider these specific alternative strategies:**
-             - If you were editing **test files** → try editing the **source code** instead (or vice versa).
-             - If you were fixing **method signatures** → check if the **entire API contract** changed (class renamed, module restructured).
-             - If you were patching **one file** → check if a **config/initializer** or **monkey-patch** also needs updating.
-             - If the error is in a **dependency chain** → check if an intermediate gem also needs adaptation.
-          5. **You are fully responsible** for making CI green. Do not suggest manual intervention or ask the user to do anything.
-
-          ### ⚠️ Constraints (STRICTLY enforced for escalated attempts)
-          - **Do not modify more than 8 files** — you've been making changes that don't help; be more surgical.
-          - **Do not add or remove gems** from the Gemfile; only adapt code and tests to the new gem versions.
-          - **Do not downgrade any dependency.**
-          - **Do not re-apply any change you already made in a previous attempt.** Read your previous PRs first.
-          - **Do not refactor unrelated code** or introduce new features, tests, or checks.
+          **Constraints (escalated)**
+          - Do not modify more than 8 files.
+          - Do not add or remove gems; adapt code/tests to the Dependabot versions.
+          - Do not downgrade dependencies.
+          - Do not re-apply changes already tried in earlier attempts.
+          - Avoid refactors or new features/tests unrelated to the fix.
           ESCALATION
           )
           else
             HEADER="## 🔄 Copilot: Retry Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
             CONTEXT=$(cat <<RETRY
-          Previous fix attempts did **not** fully resolve CI. Review what was already tried in earlier comments and PRs on this branch, then fix the **remaining** issues. Do **not** repeat changes that were already applied.
+          Previous fixes did not make CI green. Read prior Copilot PRs/comments, avoid repeating the same edits, review upgraded gems' changelogs, and trace the full stack to find the root cause.
 
-          ### 🔍 Before you start
-          - **Read every previous Copilot fix PR** on this branch. Understand what was already changed and why it didn't fully work.
-          - **Check the gem's CHANGELOG or release notes** for the upgraded version — look for breaking changes, renamed methods, or removed APIs.
-          - **Trace the error stack traces** to find the actual root cause, not just the symptom.
-
-          ### ⚠️ Constraints (apply to ALL attempts)
-          - **Do not modify more than 10 files** in a single PR.
-          - **Do not add or remove gems** from the Gemfile; only adapt code and tests to the new gem versions from this Dependabot PR.
-          - **Do not downgrade any dependency.**
-          - **Do not re-apply changes** that were already tried in a previous attempt.
-          - **Do not refactor unrelated code** or introduce new features, tests, or checks.
+          **Constraints**
+          - Do not modify more than 10 files.
+          - Do not add or remove gems; adapt code/tests to the Dependabot versions.
+          - Do not downgrade dependencies.
+          - Do not re-apply changes already tried.
+          - Avoid refactors or new features/tests unrelated to the fix.
           RETRY
           )
           fi
@@ -600,150 +578,96 @@ jobs:
           FAILED_JOBS_JSON=$(cat /tmp/failed_jobs.json 2>/dev/null || echo '[]')
           LOG_TEXT=$(cat /tmp/failure_logs.txt 2>/dev/null || echo 'No logs captured.')
 
-          cat > /tmp/copilot_comment.md <<COMMENT
-          ${COPILOT_MARKER}
-          @copilot
+           cat > /tmp/copilot_comment.md <<COMMENT
+           ${COPILOT_MARKER}
+           @copilot
 
-          ${HEADER}
+           ${HEADER}
 
-          ${CONTEXT}
+           ${CONTEXT}
 
-          ---
+           ### Latest CI Failure Details
+           - 🔗 **Failing CI run:** ${RUN_URL}
+           - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
+           - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
+           - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
+           - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
 
-          Please take full ownership of fixing this Dependabot PR so that **all CI checks pass on this branch**.
+           **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
+           ```
+           ${LOG_TEXT}
+           ```
 
-          ### Goal
+           **Failed jobs:**
+           ```json
+           ${FAILED_JOBS_JSON}
+           ```
 
-          - Analyze this Dependabot PR and the **current CI failures** on this branch.
-          - Make the minimal code-level changes needed so that this attempt’s failing jobs (listed below) pass. Do not try to fix unrelated jobs or introduce new checks
-          - Create a **new pull request that targets this Dependabot branch** with your fixes.
-          - After I merge your PR into this branch, CI on this branch should be **green with no failing jobs**.
+           ### Detected Error Signatures (deduplicated)
+           $(if [[ -f /tmp/current_metrics.json ]]; then
+           SIGS=$(jq -r '.error_signatures[]' /tmp/current_metrics.json 2>/dev/null || echo '')
+           if [[ -n "${SIGS:-}" ]]; then
+           cat <<SIGS_BLOCK
+           ```
+           ${SIGS}
+           ```
+           SIGS_BLOCK
+           else
+           echo "None captured."
+           fi
+           else
+           echo "None captured."
+           fi)
 
-          ### Latest CI Failure Details
+           ### What Changed in This Attempt
+           - Summarize the code/config/test changes you apply in this attempt.
 
-          🔗 **Failing CI run:** ${RUN_URL}
-          🏗️ **Failed workflow:** ${WORKFLOW_NAME}
-          📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
-          📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
-          🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
+           ### Changes in This Dependabot PR (from prior Copilot PR)
+           $(if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY:-}" ]]; then
+           cat <<GEM_BLOCK
+           ${GEM_SUMMARY}
+           GEM_BLOCK
+           else
+           echo "No prior Copilot PR summary found; review Gemfile/Gemfile.lock and the Dependabot diff."
+           fi)
 
-          $(if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY:-}" ]]; then
-          cat <<GEM_BLOCK
-          ### 💎 Gem Changes in This Dependabot PR
+           ### Work Plan (5-step checklist)
+           - Use the single checklist below; do not create new checklist comments.
+           - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
 
-          > **Use this to understand what actually changed.** Map the errors above to the gem changes below.
-          > If a gem had a **major** bump, check its CHANGELOG/migration guide for breaking changes.
-          > If a gem had a **minor/patch** bump and errors reference it, check for deprecation removals.
+           ```markdown
+           ${COPILOT_PROGRESS_MARKER}
+           ### 🤖 Copilot Fix Progress
 
-          ${GEM_SUMMARY}
-          GEM_BLOCK
-          fi)
+           - [ ] **Step 1 — Understand the failures:**
+           - [ ] **Step 2 — Plan and apply fixes:**
+           - [ ] **Step 3 — Run the full test suite:**
+           - [ ] **Step 4 — Create the fix PR:**
+           - [ ] **Step 5 — Iterate until green:**
+           - [ ] **Ready to merge ✅**
+           ```
 
-          $(if [[ -f /tmp/current_metrics.json ]]; then
-          SIGS=$(jq -r '.error_signatures[]' /tmp/current_metrics.json 2>/dev/null || echo '')
-          if [[ -n "${SIGS:-}" ]]; then
-          cat <<SIGS_BLOCK
-          **Detected error signatures (deduplicated):**
-          \`\`\`
-          ${SIGS}
-          \`\`\`
+           ### Progress Updates (edit inline)
+           - After each step, update the checklist above with status + one-line summary.
 
-          SIGS_BLOCK
-          fi
-          fi)
+           ### Previous Attempts (brief deltas)
+           $(if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
+           cat <<METRICS_BLOCK
+           | Metric | Previous (Attempt #$((ATTEMPT - 1))) | Current (Attempt #${ATTEMPT}) | Change |
+           |--------|---------|---------|--------|
+           | Failed jobs | ${PREV_FAILED_JOB_COUNT} | ${CURRENT_FAILED_JOB_COUNT} | $(if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_FAILED_JOB_COUNT}" -eq "${PREV_FAILED_JOB_COUNT}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi) |
+           | Error signatures | ${PREV_ERROR_SIG_COUNT:-?} | ${CURRENT_ERROR_SIG_COUNT} | $(if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_ERROR_SIG_COUNT}" -eq "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi) |
+           | Stall streak | — | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} | $(if [[ "${STALL_STREAK}" -eq 0 ]]; then echo "✅ Reset"; else echo "⚠️ No progress"; fi) |
 
-          $(if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
-          cat <<METRICS_BLOCK
-          ### 📊 Progress vs Previous Attempt
+           If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt.
+           METRICS_BLOCK
+           else
+           echo "First tracked attempt for metrics."
+           fi)
 
-          | Metric | Previous (Attempt #$((ATTEMPT - 1))) | Current (Attempt #${ATTEMPT}) | Change |
-          |--------|---------|---------|--------|
-          | Failed jobs | ${PREV_FAILED_JOB_COUNT} | ${CURRENT_FAILED_JOB_COUNT} | $(if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_FAILED_JOB_COUNT}" -eq "${PREV_FAILED_JOB_COUNT}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi) |
-          | Error signatures | ${PREV_ERROR_SIG_COUNT:-?} | ${CURRENT_ERROR_SIG_COUNT} | $(if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_ERROR_SIG_COUNT}" -eq "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi) |
-          | Stall streak | — | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} | $(if [[ "${STALL_STREAK}" -eq 0 ]]; then echo "✅ Reset"; else echo "⚠️ No progress"; fi) |
-
-          > **⚠️ If the above metrics show no improvement, your approach from the previous attempt did not work. Try a fundamentally different fix strategy.**
-          METRICS_BLOCK
-          fi)
-
-          **Failed jobs:**
-          \`\`\`json
-          ${FAILED_JOBS_JSON}
-          \`\`\`
-
-          **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
-          \`\`\`
-          ${LOG_TEXT}
-          \`\`\`
-
-          ### How to work
-
-          **As your very first action**, post a single comment on this PR with the checklist below (copy it exactly).
-          Then **edit that same comment** to check off each item as you complete it, adding a short summary next to the checkbox.
-          If a progress comment with marker ${COPILOT_PROGRESS_MARKER} already exists, **reuse and update that same comment** instead of creating a new one.
-          Do **not** post separate progress comments for each step or each retry — keep everything in one persistent checklist thread.
-          After **every step**, immediately update that same checklist comment with a clear status note (Done / In progress / Blocked + one-line reason).
-          If you intentionally skip a step, check it off and write \`Skipped: <reason>\` next to it.
-
-          \`\`\`markdown
-          ${COPILOT_PROGRESS_MARKER}
-          ### 🤖 Copilot Fix Progress
-
-          - [ ] **Step 1 — Understand the failures:**
-          - [ ] **Step 2 — Plan and apply fixes:**
-          - [ ] **Step 3 — Run the full test suite:**
-          - [ ] **Step 4 — Create the fix PR:**
-          - [ ] **Step 5 — Iterate until green:**
-          - [ ] **Ready to merge ✅**
-          \`\`\`
-
-          #### Step details
-
-          1. **Understand the failures**
-             - Read the failure logs above carefully.
-             - Also check the full CI run at the link above for complete context.
-             - Identify the **exact errors** (e.g., failing Rails tests, lint offenses, missing dependencies, schema mismatches, etc.).
-             - ✏️ Status update required: immediately edit your checklist after this step and add a one-line summary of what failed and why.
-
-          2. **Plan and apply fixes**
-             - Update or remove specs, code, config, or CI steps as needed.
-             - Do **not** downgrade the dependencies; keep the versions from this Dependabot PR and adapt the code/config to them.
-             - Keep changes **minimal and focused** only on what is needed to get CI green.
-             - If this is a retry, check what was already changed in previous fix PRs and build on top of those changes.
-             - ✏️ Status update required: immediately edit your checklist after this step and add a one-line summary of the changes you applied.
-
-          3. **Run the full test suite in your environment**
-             - Run the full suite in your ephemeral environment:
-               \`\`\`bash
-               bin/rails test:prepare
-               bin/rails test
-               \`\`\`
-             - If they still fail, **iterate on your changes and re-run** until they pass or you hit a hard blocker.
-             - ✏️ Status update required: immediately edit your checklist after this step and add a one-line summary of test results (pass/fail and why).
-
-          4. **Create the PR to this branch**
-             - Open a new PR **from your Copilot branch into this Dependabot branch**.
-             - Title the PR: \`AI GEM UPGRADE\`
-             - Include a clear description explaining:
-               - What broke and why.
-               - Exactly what files you changed and why those changes fix the CI failures.
-               - What attempt number this is.
-             - ✏️ Status update required: immediately edit your checklist after this step and add a link to the PR you opened.
-
-          5. **You are only responsible for the jobs that were failing in this attempt. If other jobs are still failing, leave them and explain in your checklist comment.**
-             - Keep iterating within this session until:
-               - The tests and CI commands you run are passing, **and**
-               - You are confident that merging your PR into this branch will let the GitHub CI checks pass as well.
-             - If you hit a hard blocker you truly cannot solve, explain clearly what is blocking you.
-             - ✏️ Status update required: immediately edit your checklist after this step and add a one-line summary confirming CI is green or explaining the blocker.
-
-          6. **Final sign-off**
-             - Once all steps above are done and CI is passing, check off the last item: **Ready to merge ✅**.
-             - This signals that your fix PR is complete and safe to merge into the Dependabot branch.
-
-          ---
-          _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
-          COMMENT
+           ---
+           _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
+           COMMENT
 
       - name: Post Copilot trigger comment
         if: >-

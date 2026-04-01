@@ -30,9 +30,9 @@ concurrency:
 
 jobs:
   post-summary:
-    # Only when CI SUCCEEDED on a Dependabot PR branch
+    # Runs on any completed CI (success or failure) for Dependabot PR branches
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure') &&
       github.event.workflow_run.event == 'pull_request' &&
       startsWith(github.event.workflow_run.head_branch, 'dependabot/')
     runs-on: ubuntu-latest
@@ -92,37 +92,11 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "📊 Found ${ATTEMPT_COUNT} Copilot fix attempt(s) on PR #${PR_NUMBER}"
 
-      # ── Step 3: Check if summary already posted ───────────────
-      - name: Check for existing summary
-        if: >-
-          steps.find_pr.outputs.skip != 'true' &&
-          steps.check_copilot.outputs.skip != 'true'
-        id: check_summary
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT_FOR_COPILOT }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.find_pr.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-
-          RAW_EXISTING=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --jq "[.[] | select(.body | contains(\"${SUMMARY_MARKER}\"))] | length" \
-            | paste -sd+ -)
-          EXISTING=$(( ${RAW_EXISTING:-0} ))
-
-          if [[ "${EXISTING}" -gt 0 ]]; then
-            echo "ℹ️  Fix summary already posted. Skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       # ── Step 4: Gather all fix attempt data ───────────────────
       - name: Gather fix data
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
-          steps.check_copilot.outputs.skip != 'true' &&
-          steps.check_summary.outputs.skip != 'true'
+          steps.check_copilot.outputs.skip != 'true'
         id: gather
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_FOR_COPILOT }}
@@ -140,6 +114,9 @@ jobs:
 
           echo "pr_title=${PR_TITLE}" >> "$GITHUB_OUTPUT"
           echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+
+          # Expose run conclusion
+          echo "run_conclusion=${{ github.event.workflow_run.conclusion }}" >> "$GITHUB_OUTPUT"
 
           # ── 4b: Fetch controller state (final metrics) ──
           STATE_BODY=$(
@@ -271,8 +248,7 @@ jobs:
       - name: Post fix summary
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
-          steps.check_copilot.outputs.skip != 'true' &&
-          steps.check_summary.outputs.skip != 'true'
+          steps.check_copilot.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_FOR_COPILOT }}
           REPO: ${{ github.repository }}
@@ -290,8 +266,18 @@ jobs:
           HAS_PROGRESS: ${{ steps.gather.outputs.has_progress }}
           FIX_PR_COUNT: ${{ steps.gather.outputs.fix_pr_count }}
           TOTAL_FILES_CHANGED: ${{ steps.gather.outputs.total_files_changed }}
+          RUN_CONCLUSION: ${{ steps.gather.outputs.run_conclusion }}
         run: |
           set -euo pipefail
+
+          # Determine outcome wording based on run conclusion
+          if [[ "${RUN_CONCLUSION}" == "success" ]]; then
+            OUTCOME="✅ CI is now green"
+            OUTCOME_EMOJI="✅"
+          else
+            OUTCOME="❌ CI is still failing"
+            OUTCOME_EMOJI="❌"
+          fi
 
           # ── Build fix PR table ──
           FIX_PR_TABLE=""
@@ -318,9 +304,6 @@ jobs:
           fi
 
           # ── Determine outcome ──
-          OUTCOME="✅ CI is now green"
-          OUTCOME_EMOJI="✅"
-
           # ── Build the summary comment ──
           cat > /tmp/summary_comment.md <<SUMMARY_EOF
           ${SUMMARY_MARKER}
@@ -342,7 +325,7 @@ jobs:
           | **Fix PRs created** | ${FIX_PR_COUNT} |
           | **Total files changed** | ${TOTAL_FILES_CHANGED} |
           | **Final stall streak** | ${FINAL_STALL_STREAK} |
-          | **Green CI run** | [View](${RUN_URL}) |
+          | **CI run** | [View](${RUN_URL}) |
 
           ---
 
@@ -488,10 +471,20 @@ jobs:
           DATA_EOF
 
           # ── Post the summary comment ──
-          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --field body=@/tmp/summary_comment.md
+          # Upsert: update existing summary if present, else create
+          EXISTING_ID=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"${SUMMARY_MARKER}\"))] | last // empty | .id" 2>/dev/null || echo "")
 
-          echo "✅ Posted fix summary on PR #${PR_NUMBER}"
+          if [[ -n "${EXISTING_ID:-}" && "${EXISTING_ID}" != "null" ]]; then
+            gh api "repos/${REPO}/issues/comments/${EXISTING_ID}" \
+              --method PATCH \
+              --field body=@/tmp/summary_comment.md
+            echo "✅ Updated fix summary on PR #${PR_NUMBER}"
+          else
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --field body=@/tmp/summary_comment.md
+            echo "✅ Posted fix summary on PR #${PR_NUMBER}"
+          fi
 
       # ── Step 6: Add summary label ─────────────────────────────
       - name: Add summary label
