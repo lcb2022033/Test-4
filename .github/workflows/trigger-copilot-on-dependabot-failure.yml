@@ -191,7 +191,52 @@ jobs:
             while IFS=$'\t' read -r FAILED_JOB_ID FAILED_JOB_NAME; do
               [[ -z "${FAILED_JOB_ID:-}" ]] && continue
 
-              if ! gh api "repos/${REPO}/actions/jobs/${FAILED_JOB_ID}/logs" > /tmp/failed_job_full.log 2>/dev/null; then
+              if ! gh api "repos/${REPO}/actions/jobs/${FAILED_JOB_ID}/logs" > /tmp/failed_job_raw.zip 2>/dev/null; then
+                continue
+              fi
+
+              # Logs are returned as a ZIP; extract to plain text for parsing
+              PYTHON_BIN="python3"
+              if ! command -v python3 >/dev/null 2>&1; then
+                if command -v python >/dev/null 2>&1; then
+                  PYTHON_BIN="python"
+                else
+                  echo "⚠️  Neither python3 nor python is available on the runner; cannot unzip logs for job ${FAILED_JOB_ID}." >&2
+                  continue
+                fi
+              fi
+
+              cat > /tmp/unzip_job_logs.py <<'PYEOF'
+import io
+import sys
+import zipfile
+
+def main():
+    data = sys.stdin.buffer.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        sys.stdout.write(data.decode("utf-8", errors="replace"))
+        return 0
+    except Exception as exc:
+        sys.stderr.write(f"failed to open zip: {exc}\n")
+        return 1
+    contents = []
+    for name in zf.namelist():
+        try:
+            contents.append(zf.read(name).decode("utf-8", errors="replace"))
+        except Exception as exc:
+            sys.stderr.write(f"failed to read {name}: {exc}\n")
+    sys.stdout.write("\n".join(contents))
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PYEOF
+
+              if ! cat /tmp/failed_job_raw.zip | "${PYTHON_BIN}" /tmp/unzip_job_logs.py > /tmp/failed_job_full.log 2>/tmp/failed_job_unzip.err; then
+                echo "⚠️  Failed to unzip logs for job ${FAILED_JOB_ID}; raw zip saved to /tmp/failed_job_raw.zip" >&2
+                cat /tmp/failed_job_unzip.err >&2 || true
                 continue
               fi
 
