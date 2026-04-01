@@ -286,7 +286,7 @@ jobs:
               if length == 0 then "No Copilot fix PRs found."
               else
                 "| PR | Title | Status | Author | Created |\n|-----|-------|--------|--------|---------|\n" +
-                (map("| [#\(.number)](\(.url)) | \(.title) | \(if .merged then "✅ Merged" elif .state == "open" then "🟡 Open" else "⚫ Closed" end) | @\(.author) | \(.created_at | split("T")[0]) |") | join("\n"))
+                (map("| [#\(.number)](\(.url)) | \(.title) | \(if .merged then "✅ Merged" elif .state == "open" then "🟡 Open" else "⚫ Closed" end) | \(.author) | \(.created_at | split("T")[0]) |") | join("\n"))
               end
             ' /tmp/fix_prs.json)
           fi
