@@ -3,7 +3,7 @@ name: trigger-copilot-on-dependabot-failure
 on:
   workflow_run:
     workflows: ["Tests"]
-    types: [completed]
+  COPILOT_MARKER: "<!-- copilot-fix-attempt-v2 -->"
     branches:
       - 'dependabot/**'
 
@@ -67,7 +67,7 @@ jobs:
           set -euo pipefail
 
           RAW_COUNT=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --jq "[.[] | select(.body | contains(\"$COPILOT_MARKER\"))] | length" \
+            --jq "[.[] | select(.body | startswith(\"${COPILOT_MARKER}\"))] | length" \
             | paste -sd+ -)
           ATTEMPT_COUNT=$(( ${RAW_COUNT:-0} + 1 ))
           echo "attempt=${ATTEMPT_COUNT}" >> "$GITHUB_OUTPUT"
@@ -626,6 +626,7 @@ jobs:
           fi
 
           cat > /tmp/copilot_comment.md <<COMMENT
+          ${COPILOT_MARKER}
           @copilot
 
           ${HEADER}
@@ -663,6 +664,7 @@ jobs:
           - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
 
           \`\`\`markdown
+          ${COPILOT_PROGRESS_MARKER}
           ### 🤖 Copilot Fix Progress
 
           - [ ] **Step 1 — Understand the failures:**
@@ -752,6 +754,7 @@ jobs:
             }')
 
           cat > /tmp/controller_state_comment.md <<STATE_EOF
+          ${CONTROLLER_STATE_MARKER}
           ### 📈 Copilot Controller State (attempt #${ATTEMPT})
 
           > **Do not edit this comment** — it is used by the automation to track progress.

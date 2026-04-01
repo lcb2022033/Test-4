@@ -19,7 +19,7 @@ on:
 permissions: {}
 
 env:
-  COPILOT_MARKER: "<!-- copilot-fix-attempt -->"
+  COPILOT_MARKER: "<!-- copilot-fix-attempt-v2 -->"
   CONTROLLER_STATE_MARKER: "<!-- copilot-controller-state -->"
   COPILOT_PROGRESS_MARKER: "<!-- copilot-fix-progress -->"
   SUMMARY_MARKER: "<!-- copilot-fix-summary -->"
@@ -78,7 +78,7 @@ jobs:
 
           # Count Copilot trigger comments
           RAW_COUNT=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --jq "[.[] | select(.body | contains(\"${COPILOT_MARKER}\"))] | length" \
+            --jq "[.[] | select(.body | startswith(\"${COPILOT_MARKER}\"))] | length" \
             | paste -sd+ -)
           ATTEMPT_COUNT=$(( ${RAW_COUNT:-0} ))
 
@@ -188,7 +188,7 @@ jobs:
           # ── 4e: Extract error signatures from the last trigger comment ──
           LAST_TRIGGER=$(
             gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --jq "[.[] | select(.body | contains(\"${COPILOT_MARKER}\"))] | last // empty | .body" \
+              --jq "[.[] | select(.body | startswith(\"${COPILOT_MARKER}\"))] | last // empty | .body" \
             || echo ''
           )
 
