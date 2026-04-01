@@ -126,19 +126,19 @@ jobs:
             exit 0
           fi
 
-          cat > /tmp/max_reached_body.md <<MAX_NOTICE_EOF
-          ${MAX_REACHED_MARKER}
+          cat > /tmp/max_reached_body.md <<'MAX_NOTICE_EOF'
+          <!-- copilot-fix-max-reached -->
           ## 🛑 Automated fix limit reached
           MAX_NOTICE_EOF
 
-          cat >> /tmp/max_reached_body.md <<MAX_NOTICE_EOF
+                    cat >> /tmp/max_reached_body.md <<MAX_NOTICE_EOF
 
           Copilot has attempted **${MAX_COPILOT_RETRIES}** fixes and CI is still failing.
 
           **Manual intervention is required.** Please review:
           - The latest [failing CI run](${RUN_URL})
           - Previous Copilot fix PRs on this branch
-
+          
           Consider:
           1. Manually fixing the remaining issues
           2. Closing this Dependabot PR if the upgrade isn't feasible right now
@@ -207,32 +207,32 @@ jobs:
               fi
 
               cat > /tmp/unzip_job_logs.py <<'PYEOF'
-import io
-import sys
-import zipfile
+              import io
+              import sys
+              import zipfile
 
-def main():
-    data = sys.stdin.buffer.read()
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile:
-        sys.stdout.write(data.decode("utf-8", errors="replace"))
-        return 0
-    except Exception as exc:
-        sys.stderr.write(f"failed to open zip: {exc}\n")
-        return 1
-    contents = []
-    for name in zf.namelist():
-        try:
-            contents.append(zf.read(name).decode("utf-8", errors="replace"))
-        except Exception as exc:
-            sys.stderr.write(f"failed to read {name}: {exc}\n")
-    sys.stdout.write("\n".join(contents))
-    return 0
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-PYEOF
+              def main():
+                  data = sys.stdin.buffer.read()
+                  try:
+                      zf = zipfile.ZipFile(io.BytesIO(data))
+                  except zipfile.BadZipFile:
+                      sys.stdout.write(data.decode("utf-8", errors="replace"))
+                      return 0
+                  except Exception as exc:
+                      sys.stderr.write(f"failed to open zip: {exc}\n")
+                      return 1
+                  contents = []
+                  for name in zf.namelist():
+                      try:
+                          contents.append(zf.read(name).decode("utf-8", errors="replace"))
+                      except Exception as exc:
+                          sys.stderr.write(f"failed to read {name}: {exc}\n")
+                  sys.stdout.write("\n".join(contents))
+                  return 0
+                      
+              if __name__ == "__main__":
+                  raise SystemExit(main())
+              PYEOF
 
               if ! cat /tmp/failed_job_raw.zip | "${PYTHON_BIN}" /tmp/unzip_job_logs.py > /tmp/failed_job_full.log 2>/tmp/failed_job_unzip.err; then
                 echo "⚠️  Failed to unzip logs for job ${FAILED_JOB_ID}; raw zip saved to /tmp/failed_job_raw.zip" >&2
@@ -512,7 +512,7 @@ PYEOF
           echo "stall_streak=${STALL_STREAK}" >> "$GITHUB_OUTPUT"
 
           if [[ "${STALL_STREAK}" -ge "${MAX_STALL_ATTEMPTS}" ]]; then
-            echo "� Stall streak ${STALL_STREAK} ≥ threshold ${MAX_STALL_ATTEMPTS} — Copilot will receive escalated instructions."
+            echo "🚩 Stall streak ${STALL_STREAK} ≥ threshold ${MAX_STALL_ATTEMPTS} — Copilot will receive escalated instructions."
           fi
 
       # ── Step 5d: Fetch gem change summary from PR ─────────────
@@ -575,48 +575,46 @@ PYEOF
           CURRENT_ERROR_SIG_COUNT: ${{ steps.logs.outputs.error_signature_count }}
           STALL_STREAK: ${{ steps.improvement.outputs.stall_streak }}
           HAS_GEM_SUMMARY: ${{ steps.gem_summary.outputs.has_gem_summary }}
-          GEM_SUMMARY: ${{ steps.gem_summary.outputs.gem_summary }}
         run: |
           set -euo pipefail
 
+          # Read gem summary from file if it exists (avoids env var injection issues)
+          GEM_SUMMARY_TEXT=""
+          if [[ "${HAS_GEM_SUMMARY}" == "true" && -f /tmp/gem_summary.md ]]; then
+            GEM_SUMMARY_TEXT=$(cat /tmp/gem_summary.md)
+          fi
+
           if [[ "${ATTEMPT}" -eq 1 ]]; then
             HEADER="## 🤖 Copilot: Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
-            CONTEXT=$(cat <<FIRST_ATTEMPT
-          This is the **first** automated fix attempt. Keep changes minimal and focused only on making CI green.
+            CONTEXT="This is the **first** automated fix attempt. Keep changes minimal and focused only on making CI green.
 
           **Constraints**
           - Do not modify more than 10 files.
           - Do not add or remove gems; adapt code/tests to the Dependabot versions.
           - Do not downgrade dependencies.
-          - Avoid refactors or new features/tests unrelated to the fix.
-          FIRST_ATTEMPT
-          )
+          - Avoid refactors or new features/tests unrelated to the fix."
+
           elif [[ "${STALL_STREAK}" -ge "${MAX_STALL_ATTEMPTS}" ]]; then
             HEADER="## 🚩 Escalated Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
-            CONTEXT=$(cat <<ESCALATION
-          **Stall streak ${STALL_STREAK}/${MAX_STALL_ATTEMPTS}: no improvement in failed jobs/error signatures. Change strategy now.** Stop editing the same spots; follow stack traces and gem migration notes. Be surgical (≤8 files) and avoid repeating prior edits.
+            CONTEXT="**Stall streak ${STALL_STREAK}/${MAX_STALL_ATTEMPTS}: no improvement in failed jobs/error signatures. Change strategy now.** Stop editing the same spots; follow stack traces and gem migration notes. Be surgical (≤8 files) and avoid repeating prior edits.
 
           **Constraints (escalated)**
           - Do not modify more than 8 files.
           - Do not add or remove gems; adapt code/tests to the Dependabot versions.
           - Do not downgrade dependencies.
           - Do not re-apply changes already tried in earlier attempts.
-          - Avoid refactors or new features/tests unrelated to the fix.
-          ESCALATION
-          )
+          - Avoid refactors or new features/tests unrelated to the fix."
+
           else
             HEADER="## 🔄 Copilot: Retry Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
-            CONTEXT=$(cat <<RETRY
-          Previous fixes did not make CI green. Read prior Copilot PRs/comments, avoid repeating the same edits, review upgraded gems' changelogs, and trace the full stack to find the root cause.
+            CONTEXT="Previous fixes did not make CI green. Read prior Copilot PRs/comments, avoid repeating the same edits, review upgraded gems' changelogs, and trace the full stack to find the root cause.
 
           **Constraints**
           - Do not modify more than 10 files.
           - Do not add or remove gems; adapt code/tests to the Dependabot versions.
           - Do not downgrade dependencies.
           - Do not re-apply changes already tried.
-          - Avoid refactors or new features/tests unrelated to the fix.
-          RETRY
-          )
+          - Avoid refactors or new features/tests unrelated to the fix."
           fi
 
           # Read log artifacts produced by the previous step
@@ -633,101 +631,104 @@ PYEOF
           fi
 
           # Build gem summary section
-          if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY:-}" ]]; then
-            GEM_SECTION="${GEM_SUMMARY}"
+          if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY_TEXT:-}" ]]; then
+            GEM_SECTION="${GEM_SUMMARY_TEXT}"
           else
             GEM_SECTION="No prior Copilot PR summary found; review Gemfile/Gemfile.lock and the Dependabot diff."
           fi
 
           # Build previous attempts table section
           if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
-            PREV_SECTION=$(printf '%s\n' \
-              "| Metric | Previous (Attempt #PREV_ATTEMPT) | Current (Attempt #CURR_ATTEMPT) | Change |" \
-              "|--------|---------|---------|--------|" \
-              "| Failed jobs | PREV_JOBS | CURR_JOBS | JOB_CHANGE |" \
-              "| Error signatures | PREV_SIGS | CURR_SIGS | SIG_CHANGE |" \
-              "| Stall streak | — | CURR_STALL / MAX_STALL | STALL_CHANGE |" \
-              "" \
-              "If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt.")
+            PREV_ATTEMPT=$(( ATTEMPT - 1 ))
+            JOB_CHANGE="⚠️ No change"
+            if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then
+              JOB_CHANGE="✅ Improved"
+            elif [[ "${CURRENT_FAILED_JOB_COUNT}" -gt "${PREV_FAILED_JOB_COUNT}" ]]; then
+              JOB_CHANGE="❌ Regressed"
+            fi
 
-            JOB_CHANGE="$(if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_FAILED_JOB_COUNT}" -eq "${PREV_FAILED_JOB_COUNT}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi)"
-            SIG_CHANGE="$(if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_ERROR_SIG_COUNT}" -eq "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi)"
-            STALL_CHANGE="$(if [[ "${STALL_STREAK}" -eq 0 ]]; then echo "✅ Reset"; else echo "⚠️ No progress"; fi)"
+            SIG_CHANGE="⚠️ No change"
+            if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then
+              SIG_CHANGE="✅ Improved"
+            elif [[ "${CURRENT_ERROR_SIG_COUNT}" -gt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then
+              SIG_CHANGE="❌ Regressed"
+            fi
 
-            PREV_SECTION=${PREV_SECTION/PREV_ATTEMPT/$((ATTEMPT - 1))}
-            PREV_SECTION=${PREV_SECTION/CURR_ATTEMPT/${ATTEMPT}}
-            PREV_SECTION=${PREV_SECTION/PREV_JOBS/${PREV_FAILED_JOB_COUNT}}
-            PREV_SECTION=${PREV_SECTION/CURR_JOBS/${CURRENT_FAILED_JOB_COUNT}}
-            PREV_SECTION=${PREV_SECTION/JOB_CHANGE/${JOB_CHANGE}}
-            PREV_SECTION=${PREV_SECTION/PREV_SIGS/${PREV_ERROR_SIG_COUNT:-?}}
-            PREV_SECTION=${PREV_SECTION/CURR_SIGS/${CURRENT_ERROR_SIG_COUNT}}
-            PREV_SECTION=${PREV_SECTION/SIG_CHANGE/${SIG_CHANGE}}
-            PREV_SECTION=${PREV_SECTION/CURR_STALL/${STALL_STREAK}}
-            PREV_SECTION=${PREV_SECTION/MAX_STALL/${MAX_STALL_ATTEMPTS}}
-            PREV_SECTION=${PREV_SECTION/STALL_CHANGE/${STALL_CHANGE}}
-          else
-            PREV_SECTION="First tracked attempt for metrics."
-          fi
+            STALL_CHANGE="⚠️ No progress"
+            if [[ "${STALL_STREAK}" -eq 0 ]]; then
+              STALL_CHANGE="✅ Reset"
+            fi
 
-          cat > /tmp/copilot_comment.md <<COMMENT
-          ${COPILOT_MARKER}
-          @copilot
+            PREV_SECTION="| Metric | Previous (Attempt #${PREV_ATTEMPT}) | Current (Attempt #${ATTEMPT}) | Change |
+            |--------|---------|---------|--------|
+            | Failed jobs | ${PREV_FAILED_JOB_COUNT} | ${CURRENT_FAILED_JOB_COUNT} | ${JOB_CHANGE} |
+            | Error signatures | ${PREV_ERROR_SIG_COUNT:-?} | ${CURRENT_ERROR_SIG_COUNT} | ${SIG_CHANGE} |
+            | Stall streak | — | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} | ${STALL_CHANGE} |
 
-          ${HEADER}
+            If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt."
+                      else
+                        PREV_SECTION="First tracked attempt for metrics."
+                      fi
 
-          ${CONTEXT}
+                      cat > /tmp/copilot_comment.md <<COMMENT
+            <!-- copilot-fix-attempt -->
+            @copilot
 
-          ### Latest CI Failure Details
-          - 🔗 **Failing CI run:** ${RUN_URL}
-          - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
-          - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
-          - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
-          - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
+            ${HEADER}
 
-          **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
-          ```
-          ${LOG_TEXT}
-          ```
+            ${CONTEXT}
 
-          **Failed jobs:**
-          ```json
-          ${FAILED_JOBS_JSON}
-          ```
+            ### Latest CI Failure Details
+            - 🔗 **Failing CI run:** ${RUN_URL}
+            - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
+            - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
+            - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
+            - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
 
-          ### Detected Error Signatures (deduplicated)
-          ${SIGS_SECTION}
+            **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
+            \`\`\`
+            ${LOG_TEXT}
+            \`\`\`
 
-          ### What Changed in This Attempt
-          - Summarize the code/config/test changes you apply in this attempt.
+            **Failed jobs:**
+            \`\`\`json
+            ${FAILED_JOBS_JSON}
+            \`\`\`
 
-          ### Changes in This Dependabot PR (from prior Copilot PR)
-          ${GEM_SECTION}
+            ### Detected Error Signatures (deduplicated)
+            ${SIGS_SECTION}
 
-          ### Work Plan (5-step checklist)
-          - Use the single checklist below; do not create new checklist comments.
-          - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
+            ### What Changed in This Attempt
+            - Summarize the code/config/test changes you apply in this attempt.
 
-          ```markdown
-          ${COPILOT_PROGRESS_MARKER}
-          ### 🤖 Copilot Fix Progress
+            ### Changes in This Dependabot PR (from prior Copilot PR)
+            ${GEM_SECTION}
 
-          - [ ] **Step 1 — Understand the failures:**
-          - [ ] **Step 2 — Plan and apply fixes:**
-          - [ ] **Step 3 — Run the full test suite:**
-          - [ ] **Step 4 — Create the fix PR:**
-          - [ ] **Step 5 — Iterate until green:**
-          - [ ] **Ready to merge ✅**
-          ```
+            ### Work Plan (5-step checklist)
+            - Use the single checklist below; do not create new checklist comments.
+            - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
 
-          ### Progress Updates (edit inline)
-          - After each step, update the checklist above with status + one-line summary.
+            \`\`\`markdown
+            <!-- copilot-fix-progress -->
+            ### 🤖 Copilot Fix Progress
 
-          ### Previous Attempts (brief deltas)
-          ${PREV_SECTION}
+            - [ ] **Step 1 — Understand the failures:**
+            - [ ] **Step 2 — Plan and apply fixes:**
+            - [ ] **Step 3 — Run the full test suite:**
+            - [ ] **Step 4 — Create the fix PR:**
+            - [ ] **Step 5 — Iterate until green:**
+            - [ ] **Ready to merge ✅**
+            \`\`\`
 
-          ---
-          _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
-          COMMENT
+            ### Progress Updates (edit inline)
+            - After each step, update the checklist above with status + one-line summary.
+
+            ### Previous Attempts (brief deltas)
+            ${PREV_SECTION}
+
+            ---
+            _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
+            COMMENT
 
       - name: Post Copilot trigger comment
         if: >-
@@ -806,15 +807,15 @@ PYEOF
             }')
 
           cat > /tmp/controller_state_comment.md <<STATE_EOF
-          ${CONTROLLER_STATE_MARKER}
+          <!-- copilot-controller-state -->
           ### 📈 Copilot Controller State (attempt #${ATTEMPT})
-
+                  
           > **Do not edit this comment** — it is used by the automation to track progress.
-
+                  
           \`\`\`json
           ${STATE_JSON}
           \`\`\`
-
+                  
           | Metric | Value |
           |--------|-------|
           | Attempt | #${ATTEMPT} |
@@ -822,33 +823,33 @@ PYEOF
           | Error signatures | ${ERROR_SIG_COUNT} |
           | Stall streak | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} |
           STATE_EOF
-
-          # Find existing controller state comment to update (or create new)
-          EXISTING_COMMENT_ID=$(
-            gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --jq "[.[] | select(.body | contains(\"${CONTROLLER_STATE_MARKER}\"))] | last // empty | .id" \
-            || echo ''
-          )
-
-          if [[ -n "${EXISTING_COMMENT_ID:-}" && "${EXISTING_COMMENT_ID}" != "null" ]]; then
-            # Update existing comment in-place
-            gh api "repos/${REPO}/issues/comments/${EXISTING_COMMENT_ID}" \
-              --method PATCH \
-              --field body=@/tmp/controller_state_comment.md
-            echo "📝 Updated controller state comment (id: ${EXISTING_COMMENT_ID})"
-          else
-            # Create new controller state comment
-            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --field body=@/tmp/controller_state_comment.md
-            echo "📝 Created controller state comment on PR #${PR_NUMBER}"
-          fi
-
-      # ── Step 8: Auto-approve pending Copilot workflows ────────
-      - name: Auto-approve pending workflows on Copilot PRs
-        if: >-
-          steps.find_pr.outputs.skip != 'true' &&
-          steps.check_limit.outputs.exceeded != 'true'
-        run: |
-          set -euo pipefail
-
-          echo "ℹ️  Auto-approval of workflow runs has been disabled for security reasons."
+                  
+                    # Find existing controller state comment to update (or create new)
+                    EXISTING_COMMENT_ID=$(
+                      gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                        --jq "[.[] | select(.body | contains(\"${CONTROLLER_STATE_MARKER}\"))] | last // empty | .id" \
+                      || echo ''
+                    )
+                  
+                    if [[ -n "${EXISTING_COMMENT_ID:-}" && "${EXISTING_COMMENT_ID}" != "null" ]]; then
+                      # Update existing comment in-place
+                      gh api "repos/${REPO}/issues/comments/${EXISTING_COMMENT_ID}" \
+                        --method PATCH \
+                        --field body=@/tmp/controller_state_comment.md
+                      echo "📝 Updated controller state comment (id: ${EXISTING_COMMENT_ID})"
+                    else
+                      # Create new controller state comment
+                      gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                        --field body=@/tmp/controller_state_comment.md
+                      echo "📝 Created controller state comment on PR #${PR_NUMBER}"
+                    fi
+                  
+                # ── Step 8: Auto-approve pending Copilot workflows ────────
+                - name: Auto-approve pending workflows on Copilot PRs
+                  if: >-
+                    steps.find_pr.outputs.skip != 'true' &&
+                    steps.check_limit.outputs.exceeded != 'true'
+                  run: |
+                    set -euo pipefail
+                  
+                    echo "ℹ️  Auto-approval of workflow runs has been disabled for security reasons."
