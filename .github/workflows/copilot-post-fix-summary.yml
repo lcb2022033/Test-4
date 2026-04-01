@@ -490,8 +490,7 @@ jobs:
       - name: Add summary label
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
-          steps.check_copilot.outputs.skip != 'true' &&
-          steps.check_summary.outputs.skip != 'true'
+          steps.check_copilot.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_FOR_COPILOT }}
           REPO: ${{ github.repository }}

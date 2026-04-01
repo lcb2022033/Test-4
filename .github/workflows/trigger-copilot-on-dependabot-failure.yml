@@ -578,96 +578,119 @@ jobs:
           FAILED_JOBS_JSON=$(cat /tmp/failed_jobs.json 2>/dev/null || echo '[]')
           LOG_TEXT=$(cat /tmp/failure_logs.txt 2>/dev/null || echo 'No logs captured.')
 
-           cat > /tmp/copilot_comment.md <<COMMENT
-           ${COPILOT_MARKER}
-           @copilot
+          # Build detected error signatures section
+          SIGS_SECTION="None captured."
+          if [[ -f /tmp/current_metrics.json ]]; then
+            SIGS=$(jq -r '.error_signatures[]' /tmp/current_metrics.json 2>/dev/null || echo '')
+            if [[ -n "${SIGS:-}" ]]; then
+              SIGS_SECTION=$(cat <<'SIGS_BLOCK'
+              ```
+              REPLACE_SIGS
+              ```
+              SIGS_BLOCK
+              )
+              SIGS_SECTION=${SIGS_SECTION/REPLACE_SIGS/${SIGS}}
+            fi
+          fi
 
-           ${HEADER}
+          # Build gem summary section
+          if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY:-}" ]]; then
+            GEM_SECTION="${GEM_SUMMARY}"
+          else
+            GEM_SECTION="No prior Copilot PR summary found; review Gemfile/Gemfile.lock and the Dependabot diff."
+          fi
 
-           ${CONTEXT}
+          # Build previous attempts table section
+          if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
+            PREV_SECTION=$(cat <<'METRICS_BLOCK'
+            | Metric | Previous (Attempt #PREV_ATTEMPT) | Current (Attempt #CURR_ATTEMPT) | Change |
+            |--------|---------|---------|--------|
+            | Failed jobs | PREV_JOBS | CURR_JOBS | JOB_CHANGE |
+            | Error signatures | PREV_SIGS | CURR_SIGS | SIG_CHANGE |
+            | Stall streak | — | CURR_STALL / MAX_STALL | STALL_CHANGE |
 
-           ### Latest CI Failure Details
-           - 🔗 **Failing CI run:** ${RUN_URL}
-           - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
-           - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
-           - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
-           - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
+            If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt.
+            METRICS_BLOCK
+            )
 
-           **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
-           ```
-           ${LOG_TEXT}
-           ```
+            JOB_CHANGE="$(if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_FAILED_JOB_COUNT}" -eq "${PREV_FAILED_JOB_COUNT}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi)"
+            SIG_CHANGE="$(if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_ERROR_SIG_COUNT}" -eq "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi)"
+            STALL_CHANGE="$(if [[ "${STALL_STREAK}" -eq 0 ]]; then echo "✅ Reset"; else echo "⚠️ No progress"; fi)"
 
-           **Failed jobs:**
-           ```json
-           ${FAILED_JOBS_JSON}
-           ```
+            PREV_SECTION=${PREV_SECTION/PREV_ATTEMPT/$((ATTEMPT - 1))}
+            PREV_SECTION=${PREV_SECTION/CURR_ATTEMPT/${ATTEMPT}}
+            PREV_SECTION=${PREV_SECTION/PREV_JOBS/${PREV_FAILED_JOB_COUNT}}
+            PREV_SECTION=${PREV_SECTION/CURR_JOBS/${CURRENT_FAILED_JOB_COUNT}}
+            PREV_SECTION=${PREV_SECTION/JOB_CHANGE/${JOB_CHANGE}}
+            PREV_SECTION=${PREV_SECTION/PREV_SIGS/${PREV_ERROR_SIG_COUNT:-?}}
+            PREV_SECTION=${PREV_SECTION/CURR_SIGS/${CURRENT_ERROR_SIG_COUNT}}
+            PREV_SECTION=${PREV_SECTION/SIG_CHANGE/${SIG_CHANGE}}
+            PREV_SECTION=${PREV_SECTION/CURR_STALL/${STALL_STREAK}}
+            PREV_SECTION=${PREV_SECTION/MAX_STALL/${MAX_STALL_ATTEMPTS}}
+            PREV_SECTION=${PREV_SECTION/STALL_CHANGE/${STALL_CHANGE}}
+          else
+            PREV_SECTION="First tracked attempt for metrics."
+          fi
 
-           ### Detected Error Signatures (deduplicated)
-           $(if [[ -f /tmp/current_metrics.json ]]; then
-           SIGS=$(jq -r '.error_signatures[]' /tmp/current_metrics.json 2>/dev/null || echo '')
-           if [[ -n "${SIGS:-}" ]]; then
-           cat <<SIGS_BLOCK
-           ```
-           ${SIGS}
-           ```
-           SIGS_BLOCK
-           else
-           echo "None captured."
-           fi
-           else
-           echo "None captured."
-           fi)
+          cat > /tmp/copilot_comment.md <<COMMENT
+          ${COPILOT_MARKER}
+          @copilot
 
-           ### What Changed in This Attempt
-           - Summarize the code/config/test changes you apply in this attempt.
+          ${HEADER}
 
-           ### Changes in This Dependabot PR (from prior Copilot PR)
-           $(if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY:-}" ]]; then
-           cat <<GEM_BLOCK
-           ${GEM_SUMMARY}
-           GEM_BLOCK
-           else
-           echo "No prior Copilot PR summary found; review Gemfile/Gemfile.lock and the Dependabot diff."
-           fi)
+          ${CONTEXT}
 
-           ### Work Plan (5-step checklist)
-           - Use the single checklist below; do not create new checklist comments.
-           - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
+          ### Latest CI Failure Details
+          - 🔗 **Failing CI run:** ${RUN_URL}
+          - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
+          - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
+          - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
+          - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
 
-           ```markdown
-           ${COPILOT_PROGRESS_MARKER}
-           ### 🤖 Copilot Fix Progress
+          **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
+          ```
+          ${LOG_TEXT}
+          ```
 
-           - [ ] **Step 1 — Understand the failures:**
-           - [ ] **Step 2 — Plan and apply fixes:**
-           - [ ] **Step 3 — Run the full test suite:**
-           - [ ] **Step 4 — Create the fix PR:**
-           - [ ] **Step 5 — Iterate until green:**
-           - [ ] **Ready to merge ✅**
-           ```
+          **Failed jobs:**
+          ```json
+          ${FAILED_JOBS_JSON}
+          ```
 
-           ### Progress Updates (edit inline)
-           - After each step, update the checklist above with status + one-line summary.
+          ### Detected Error Signatures (deduplicated)
+          ${SIGS_SECTION}
 
-           ### Previous Attempts (brief deltas)
-           $(if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
-           cat <<METRICS_BLOCK
-           | Metric | Previous (Attempt #$((ATTEMPT - 1))) | Current (Attempt #${ATTEMPT}) | Change |
-           |--------|---------|---------|--------|
-           | Failed jobs | ${PREV_FAILED_JOB_COUNT} | ${CURRENT_FAILED_JOB_COUNT} | $(if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_FAILED_JOB_COUNT}" -eq "${PREV_FAILED_JOB_COUNT}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi) |
-           | Error signatures | ${PREV_ERROR_SIG_COUNT:-?} | ${CURRENT_ERROR_SIG_COUNT} | $(if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_ERROR_SIG_COUNT}" -eq "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi) |
-           | Stall streak | — | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} | $(if [[ "${STALL_STREAK}" -eq 0 ]]; then echo "✅ Reset"; else echo "⚠️ No progress"; fi) |
+          ### What Changed in This Attempt
+          - Summarize the code/config/test changes you apply in this attempt.
 
-           If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt.
-           METRICS_BLOCK
-           else
-           echo "First tracked attempt for metrics."
-           fi)
+          ### Changes in This Dependabot PR (from prior Copilot PR)
+          ${GEM_SECTION}
 
-           ---
-           _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
-           COMMENT
+          ### Work Plan (5-step checklist)
+          - Use the single checklist below; do not create new checklist comments.
+          - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
+
+          ```markdown
+          ${COPILOT_PROGRESS_MARKER}
+          ### 🤖 Copilot Fix Progress
+
+          - [ ] **Step 1 — Understand the failures:**
+          - [ ] **Step 2 — Plan and apply fixes:**
+          - [ ] **Step 3 — Run the full test suite:**
+          - [ ] **Step 4 — Create the fix PR:**
+          - [ ] **Step 5 — Iterate until green:**
+          - [ ] **Ready to merge ✅**
+          ```
+
+          ### Progress Updates (edit inline)
+          - After each step, update the checklist above with status + one-line summary.
+
+          ### Previous Attempts (brief deltas)
+          ${PREV_SECTION}
+
+          ---
+          _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
+          COMMENT
 
       - name: Post Copilot trigger comment
         if: >-
