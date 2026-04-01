@@ -7,32 +7,22 @@ on:
     branches:
       - 'dependabot/**'
 
-# ──────────────────────────────────────────────────────────────
-# Least-privilege permissions — all API calls use GH_PAT_FOR_COPILOT
-# ──────────────────────────────────────────────────────────────
 permissions: {}
 
-# ──────────────────────────────────────────────────────────────
-# Max retry iterations before giving up (prevents infinite loops)
-# ──────────────────────────────────────────────────────────────
 env:
   MAX_COPILOT_RETRIES: "6"
-  MAX_STALL_ATTEMPTS: "3"          # switch to ESCALATED prompt after this many consecutive no-improvement attempts
-  COPILOT_MARKER: "<!-- copilot-fix-attempt -->"
-  COPILOT_PROGRESS_MARKER: "<!-- copilot-fix-progress -->"
-  MAX_REACHED_MARKER: "<!-- copilot-fix-max-reached -->"
-  CONTROLLER_STATE_MARKER: "<!-- copilot-controller-state -->"
+  MAX_STALL_ATTEMPTS: "3"
+  COPILOT_MARKER: ""
+  COPILOT_PROGRESS_MARKER: ""
+  MAX_REACHED_MARKER: ""
+  CONTROLLER_STATE_MARKER: ""
 
-# ──────────────────────────────────────────────────────────────
-# Prevent parallel runs for the same Dependabot branch
-# ──────────────────────────────────────────────────────────────
 concurrency:
   group: copilot-fix-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
 jobs:
   trigger-copilot:
-    # Only when the Tests workflow FAILED on a Dependabot PR branch
     if: >-
       github.event.workflow_run.conclusion == 'failure' &&
       github.event.workflow_run.event == 'pull_request' &&
@@ -41,7 +31,6 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      # ── Step 1: Resolve the PR number ─────────────────────────
       - name: Resolve PR number
         id: find_pr
         env:
@@ -67,7 +56,6 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "✅ Found PR #${PR_NUMBER}"
 
-      # ── Step 2: Count previous Copilot attempts ───────────────
       - name: Count previous attempts
         if: steps.find_pr.outputs.skip != 'true'
         id: count
@@ -78,7 +66,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Paginate all comments to get an accurate count
           RAW_COUNT=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq "[.[] | select(.body | contains(\"$COPILOT_MARKER\"))] | length" \
             | paste -sd+ -)
@@ -86,7 +73,6 @@ jobs:
           echo "attempt=${ATTEMPT_COUNT}" >> "$GITHUB_OUTPUT"
           echo "📊 Copilot fix attempt #${ATTEMPT_COUNT} (max: ${MAX_COPILOT_RETRIES})"
 
-      # ── Step 3: Gate on retry limit ───────────────────────────
       - name: Check retry limit
         if: steps.find_pr.outputs.skip != 'true'
         id: check_limit
@@ -102,7 +88,6 @@ jobs:
             echo "exceeded=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Step 4: Post max-retry notice (idempotent) ────────────
       - name: Post max-retry notice
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -115,7 +100,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Skip if we already posted a max-reached notice
           RAW_EXISTING=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq "[.[] | select(.body | contains(\"$MAX_REACHED_MARKER\"))] | length" \
             | paste -sd+ -)
@@ -127,18 +111,17 @@ jobs:
           fi
 
           cat > /tmp/max_reached_body.md <<'MAX_NOTICE_EOF'
-          <!-- copilot-fix-max-reached -->
           ## 🛑 Automated fix limit reached
           MAX_NOTICE_EOF
 
-                    cat >> /tmp/max_reached_body.md <<MAX_NOTICE_EOF
+          cat >> /tmp/max_reached_body.md <<MAX_NOTICE_EOF
 
           Copilot has attempted **${MAX_COPILOT_RETRIES}** fixes and CI is still failing.
 
           **Manual intervention is required.** Please review:
           - The latest [failing CI run](${RUN_URL})
           - Previous Copilot fix PRs on this branch
-          
+
           Consider:
           1. Manually fixing the remaining issues
           2. Closing this Dependabot PR if the upgrade isn't feasible right now
@@ -148,7 +131,6 @@ jobs:
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --field body=@/tmp/max_reached_body.md
 
-      # ── Step 5: Fetch CI failure logs ─────────────────────────
       - name: Fetch failure logs
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -161,7 +143,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ── Structured failed-job metadata ──
           gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs" \
             --jq '[.jobs[] | select(.conclusion == "failure")
                    | {name: .name,
@@ -172,8 +153,7 @@ jobs:
           cat /tmp/failed_jobs.json
           echo "::endgroup::"
 
-          # ── Error logs from failed jobs (max 4,000 lines / 30,000 chars total) ──
-          : > /tmp/failure_logs.txt   # truncate
+          : > /tmp/failure_logs.txt
 
           MAX_TOTAL_LINES=4000
           MAX_TOTAL_CHARS=30000
@@ -195,7 +175,6 @@ jobs:
                 continue
               fi
 
-              # Logs are returned as a ZIP; extract to plain text for parsing
               PYTHON_BIN="python3"
               if ! command -v python3 >/dev/null 2>&1; then
                 if command -v python >/dev/null 2>&1; then
@@ -206,33 +185,33 @@ jobs:
                 fi
               fi
 
-              cat > /tmp/unzip_job_logs.py <<'PYEOF'
-              import io
-              import sys
-              import zipfile
+          cat > /tmp/unzip_job_logs.py <<'PYEOF'
+          import io
+          import sys
+          import zipfile
 
-              def main():
-                  data = sys.stdin.buffer.read()
-                  try:
-                      zf = zipfile.ZipFile(io.BytesIO(data))
-                  except zipfile.BadZipFile:
-                      sys.stdout.write(data.decode("utf-8", errors="replace"))
-                      return 0
-                  except Exception as exc:
-                      sys.stderr.write(f"failed to open zip: {exc}\n")
-                      return 1
-                  contents = []
-                  for name in zf.namelist():
-                      try:
-                          contents.append(zf.read(name).decode("utf-8", errors="replace"))
-                      except Exception as exc:
-                          sys.stderr.write(f"failed to read {name}: {exc}\n")
-                  sys.stdout.write("\n".join(contents))
+          def main():
+              data = sys.stdin.buffer.read()
+              try:
+                  zf = zipfile.ZipFile(io.BytesIO(data))
+              except zipfile.BadZipFile:
+                  sys.stdout.write(data.decode("utf-8", errors="replace"))
                   return 0
-                      
-              if __name__ == "__main__":
-                  raise SystemExit(main())
-              PYEOF
+              except Exception as exc:
+                  sys.stderr.write(f"failed to open zip: {exc}\n")
+                  return 1
+              contents = []
+              for name in zf.namelist():
+                  try:
+                      contents.append(zf.read(name).decode("utf-8", errors="replace"))
+                  except Exception as exc:
+                      sys.stderr.write(f"failed to read {name}: {exc}\n")
+              sys.stdout.write("\n".join(contents))
+              return 0
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PYEOF
 
               if ! cat /tmp/failed_job_raw.zip | "${PYTHON_BIN}" /tmp/unzip_job_logs.py > /tmp/failed_job_full.log 2>/tmp/failed_job_unzip.err; then
                 echo "⚠️  Failed to unzip logs for job ${FAILED_JOB_ID}; raw zip saved to /tmp/failed_job_raw.zip" >&2
@@ -371,12 +350,10 @@ jobs:
             fi
           fi
 
-          # ── Compute metrics from failed_jobs.json ──
           FAILED_JOB_COUNT=$(jq 'length' /tmp/failed_jobs.json)
           echo "failed_job_count=${FAILED_JOB_COUNT}" >> "$GITHUB_OUTPUT"
           echo "📊 Current failed job count: ${FAILED_JOB_COUNT}"
 
-          # Distinct error signatures: first non-empty line of each error block
           ERROR_SIGS=$(grep -iE '(error|exception|traceback|fatal|failed|failure)' /tmp/failure_logs.txt \
             | sed 's/^[[:space:]]*//' \
             | sort -u \
@@ -387,7 +364,6 @@ jobs:
           echo "error_signature_count=${ERROR_SIG_COUNT}" >> "$GITHUB_OUTPUT"
           echo "📊 Distinct error signatures: ${ERROR_SIG_COUNT}"
 
-          # Write metrics JSON for use in controller state
           jq -n \
             --argjson count "${FAILED_JOB_COUNT}" \
             --argjson sig_count "${ERROR_SIG_COUNT}" \
@@ -399,7 +375,6 @@ jobs:
           cat /tmp/current_metrics.json
           echo "::endgroup::"
 
-          # ── Expose as outputs via delimiter-safe heredocs ──
           DELIM="GHEOF_$(openssl rand -hex 8)"
 
           {
@@ -420,7 +395,6 @@ jobs:
             echo "${DELIM}"
           } >> "$GITHUB_OUTPUT"
 
-      # ── Step 5b: Read previous controller state ───────────────
       - name: Read previous controller state
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -433,7 +407,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Find the latest controller-state comment and extract the JSON block
           STATE_BODY=$(
             gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
               --jq "[.[] | select(.body | contains(\"${CONTROLLER_STATE_MARKER}\"))] | last // empty | .body" \
@@ -462,7 +435,6 @@ jobs:
             echo "📊 Previous state — failed_job_count: ${PREV_COUNT}, error_sig_count: ${PREV_SIG_COUNT}, stall_streak: ${PREV_STALL}"
           fi
 
-      # ── Step 5c: Gate on improvement ──────────────────────────
       - name: Check for improvement
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -483,13 +455,11 @@ jobs:
           if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_COUNT:-}" ]]; then
             IMPROVED=false
 
-            # Signal 1: fewer failed jobs
             if [[ "${CURRENT_COUNT}" -lt "${PREV_COUNT}" ]]; then
               echo "✅ Job count improved: ${PREV_COUNT} → ${CURRENT_COUNT}"
               IMPROVED=true
             fi
 
-            # Signal 2: fewer error signatures (even if job count is same)
             if [[ "${CURRENT_SIG_COUNT}" -lt "${PREV_SIG_COUNT:-0}" ]]; then
               echo "✅ Error signature count improved: ${PREV_SIG_COUNT} → ${CURRENT_SIG_COUNT}"
               IMPROVED=true
@@ -515,7 +485,6 @@ jobs:
             echo "🚩 Stall streak ${STALL_STREAK} ≥ threshold ${MAX_STALL_ATTEMPTS} — Copilot will receive escalated instructions."
           fi
 
-      # ── Step 5d: Fetch gem change summary from PR ─────────────
       - name: Fetch gem change summary
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -528,8 +497,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The dependabot-gem-review workflow posts a comment with "## Dependency change summary"
-          # Fetch it so we can include gem change context in the Copilot prompt
           GEM_REVIEW_BODY=$(
             gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
               --jq '[.[] | select(.body | contains("## Dependency change summary"))] | last // empty | .body' \
@@ -543,7 +510,6 @@ jobs:
             echo "✅ Found gem review comment on PR #${PR_NUMBER}"
             echo "has_gem_summary=true" >> "$GITHUB_OUTPUT"
 
-            # Write to file for safe multi-line output
             echo "${GEM_REVIEW_BODY}" > /tmp/gem_summary.md
 
             DELIM="GHEOF_$(openssl rand -hex 8)"
@@ -554,12 +520,6 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      # ── Step 6: Build & post Copilot trigger comment ──────────
-      #
-      #   SECURITY NOTE: The comment body is written to a file and
-      #   posted via `--field body=@file` so that CI log content can
-      #   never be interpreted as shell code or GitHub expression.
-      # ────────────────────────────────────────────────────────────
       - name: Build Copilot trigger comment
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -578,7 +538,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Read gem summary from file if it exists (avoids env var injection issues)
           GEM_SUMMARY_TEXT=""
           if [[ "${HAS_GEM_SUMMARY}" == "true" && -f /tmp/gem_summary.md ]]; then
             GEM_SUMMARY_TEXT=$(cat /tmp/gem_summary.md)
@@ -617,11 +576,9 @@ jobs:
           - Avoid refactors or new features/tests unrelated to the fix."
           fi
 
-          # Read log artifacts produced by the previous step
           FAILED_JOBS_JSON=$(cat /tmp/failed_jobs.json 2>/dev/null || echo '[]')
           LOG_TEXT=$(cat /tmp/failure_logs.txt 2>/dev/null || echo 'No logs captured.')
 
-          # Build detected error signatures section
           SIGS_SECTION="None captured."
           if [[ -f /tmp/current_metrics.json ]]; then
             SIGS=$(jq -r '.error_signatures[]' /tmp/current_metrics.json 2>/dev/null || echo '')
@@ -630,14 +587,12 @@ jobs:
             fi
           fi
 
-          # Build gem summary section
           if [[ "${HAS_GEM_SUMMARY}" == "true" && -n "${GEM_SUMMARY_TEXT:-}" ]]; then
             GEM_SECTION="${GEM_SUMMARY_TEXT}"
           else
             GEM_SECTION="No prior Copilot PR summary found; review Gemfile/Gemfile.lock and the Dependabot diff."
           fi
 
-          # Build previous attempts table section
           if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
             PREV_ATTEMPT=$(( ATTEMPT - 1 ))
             JOB_CHANGE="⚠️ No change"
@@ -660,75 +615,73 @@ jobs:
             fi
 
             PREV_SECTION="| Metric | Previous (Attempt #${PREV_ATTEMPT}) | Current (Attempt #${ATTEMPT}) | Change |
-            |--------|---------|---------|--------|
-            | Failed jobs | ${PREV_FAILED_JOB_COUNT} | ${CURRENT_FAILED_JOB_COUNT} | ${JOB_CHANGE} |
-            | Error signatures | ${PREV_ERROR_SIG_COUNT:-?} | ${CURRENT_ERROR_SIG_COUNT} | ${SIG_CHANGE} |
-            | Stall streak | — | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} | ${STALL_CHANGE} |
+          |--------|---------|---------|--------|
+          | Failed jobs | ${PREV_FAILED_JOB_COUNT} | ${CURRENT_FAILED_JOB_COUNT} | ${JOB_CHANGE} |
+          | Error signatures | ${PREV_ERROR_SIG_COUNT:-?} | ${CURRENT_ERROR_SIG_COUNT} | ${SIG_CHANGE} |
+          | Stall streak | — | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} | ${STALL_CHANGE} |
 
-            If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt."
-                      else
-                        PREV_SECTION="First tracked attempt for metrics."
-                      fi
+          If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt."
+          else
+            PREV_SECTION="First tracked attempt for metrics."
+          fi
 
-                      cat > /tmp/copilot_comment.md <<COMMENT
-            <!-- copilot-fix-attempt -->
-            @copilot
+          cat > /tmp/copilot_comment.md <<COMMENT
+          @copilot
 
-            ${HEADER}
+          ${HEADER}
 
-            ${CONTEXT}
+          ${CONTEXT}
 
-            ### Latest CI Failure Details
-            - 🔗 **Failing CI run:** ${RUN_URL}
-            - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
-            - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
-            - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
-            - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
+          ### Latest CI Failure Details
+          - 🔗 **Failing CI run:** ${RUN_URL}
+          - 🏗️ **Failed workflow:** ${WORKFLOW_NAME}
+          - 📊 **Attempt:** #${ATTEMPT} of ${MAX_COPILOT_RETRIES}
+          - 📉 **Failed job count:** ${CURRENT_FAILED_JOB_COUNT}
+          - 🔍 **Distinct error signatures:** ${CURRENT_ERROR_SIG_COUNT}
 
-            **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
-            \`\`\`
-            ${LOG_TEXT}
-            \`\`\`
+          **Failure log excerpt (failed jobs, complete error blocks only, max 4,000 lines and ~30,000 chars):**
+          \`\`\`
+          ${LOG_TEXT}
+          \`\`\`
 
-            **Failed jobs:**
-            \`\`\`json
-            ${FAILED_JOBS_JSON}
-            \`\`\`
+          **Failed jobs:**
+          \`\`\`json
+          ${FAILED_JOBS_JSON}
+          \`\`\`
 
-            ### Detected Error Signatures (deduplicated)
-            ${SIGS_SECTION}
+          ### Detected Error Signatures (deduplicated)
+          ${SIGS_SECTION}
 
-            ### What Changed in This Attempt
-            - Summarize the code/config/test changes you apply in this attempt.
+          ### What Changed in This Attempt
+          - Summarize the code/config/test changes you apply in this attempt.
 
-            ### Changes in This Dependabot PR (from prior Copilot PR)
-            ${GEM_SECTION}
+          ### Changes in This Dependabot PR (from prior Copilot PR)
+          ${GEM_SECTION}
 
-            ### Work Plan (5-step checklist)
-            - Use the single checklist below; do not create new checklist comments.
-            - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
+          ### Work Plan (5-step checklist)
+          - Use the single checklist below; do not create new checklist comments.
+          - Edit the same comment after each step (Done / In progress / Blocked + one-line reason).
 
-            \`\`\`markdown
-            <!-- copilot-fix-progress -->
-            ### 🤖 Copilot Fix Progress
+          \`\`\`markdown
+          ### 🤖 Copilot Fix Progress
 
-            - [ ] **Step 1 — Understand the failures:**
-            - [ ] **Step 2 — Plan and apply fixes:**
-            - [ ] **Step 3 — Run the full test suite:**
-            - [ ] **Step 4 — Create the fix PR:**
-            - [ ] **Step 5 — Iterate until green:**
-            - [ ] **Ready to merge ✅**
-            \`\`\`
+          - [ ] **Step 1 — Understand the failures:**
+          - [ ] **Step 2 — Plan and apply fixes:**
+          - [ ] **Step 3 — Run the full test suite:**
+          - [ ] **Step 4 — Create the fix PR:**
+          - [ ] **Step 5 — Iterate until green:**
+          - [ ] **Ready to merge ✅**
+          \`\`\`
 
-            ### Progress Updates (edit inline)
-            - After each step, update the checklist above with status + one-line summary.
+          ### Progress Updates (edit inline)
+          - After each step, update the checklist above with status + one-line summary.
 
-            ### Previous Attempts (brief deltas)
-            ${PREV_SECTION}
+          ### Previous Attempts (brief deltas)
+          ${PREV_SECTION}
 
-            ---
-            _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
-            COMMENT
+          ---
+          _This comment was auto-generated by the Dependabot CI fix automation (attempt #${ATTEMPT})._
+          COMMENT
 
       - name: Post Copilot trigger comment
         if: >-
@@ -747,7 +700,6 @@ jobs:
 
           echo "✅ Posted Copilot trigger comment (attempt #${ATTEMPT}) on PR #${PR_NUMBER}"
 
-      # ── Step 7: Label the Dependabot PR ───────────────────────
       - name: Add label to Dependabot PR
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -759,7 +711,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ensure the label exists (idempotent)
           gh api "repos/${REPO}/labels" \
             --method POST \
             --field name="copilot-ci-fix-requested" \
@@ -771,11 +722,6 @@ jobs:
             --method POST \
             --input - <<< '{"labels":["copilot-ci-fix-requested"]}'
 
-      # ── Step 7b: Persist controller state ─────────────────────
-      #
-      #   Always runs after metrics are computed (even when stalled)
-      #   so the state comment reflects the latest data.
-      # ────────────────────────────────────────────────────────────
       - name: Persist controller state
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
@@ -791,7 +737,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Build the state JSON
           STATE_JSON=$(jq -n \
             --argjson attempt "${ATTEMPT}" \
             --argjson failed_job_count "${CURRENT_COUNT}" \
@@ -807,15 +752,14 @@ jobs:
             }')
 
           cat > /tmp/controller_state_comment.md <<STATE_EOF
-          <!-- copilot-controller-state -->
           ### 📈 Copilot Controller State (attempt #${ATTEMPT})
-                  
+
           > **Do not edit this comment** — it is used by the automation to track progress.
-                  
+
           \`\`\`json
           ${STATE_JSON}
           \`\`\`
-                  
+
           | Metric | Value |
           |--------|-------|
           | Attempt | #${ATTEMPT} |
@@ -823,33 +767,29 @@ jobs:
           | Error signatures | ${ERROR_SIG_COUNT} |
           | Stall streak | ${STALL_STREAK} / ${MAX_STALL_ATTEMPTS} |
           STATE_EOF
-                  
-                    # Find existing controller state comment to update (or create new)
-                    EXISTING_COMMENT_ID=$(
-                      gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-                        --jq "[.[] | select(.body | contains(\"${CONTROLLER_STATE_MARKER}\"))] | last // empty | .id" \
-                      || echo ''
-                    )
-                  
-                    if [[ -n "${EXISTING_COMMENT_ID:-}" && "${EXISTING_COMMENT_ID}" != "null" ]]; then
-                      # Update existing comment in-place
-                      gh api "repos/${REPO}/issues/comments/${EXISTING_COMMENT_ID}" \
-                        --method PATCH \
-                        --field body=@/tmp/controller_state_comment.md
-                      echo "📝 Updated controller state comment (id: ${EXISTING_COMMENT_ID})"
-                    else
-                      # Create new controller state comment
-                      gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-                        --field body=@/tmp/controller_state_comment.md
-                      echo "📝 Created controller state comment on PR #${PR_NUMBER}"
-                    fi
-                  
-                # ── Step 8: Auto-approve pending Copilot workflows ────────
-                - name: Auto-approve pending workflows on Copilot PRs
-                  if: >-
-                    steps.find_pr.outputs.skip != 'true' &&
-                    steps.check_limit.outputs.exceeded != 'true'
-                  run: |
-                    set -euo pipefail
-                  
-                    echo "ℹ️  Auto-approval of workflow runs has been disabled for security reasons."
+
+          EXISTING_COMMENT_ID=$(
+            gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --jq "[.[] | select(.body | contains(\"${CONTROLLER_STATE_MARKER}\"))] | last // empty | .id" \
+            || echo ''
+          )
+
+          if [[ -n "${EXISTING_COMMENT_ID:-}" && "${EXISTING_COMMENT_ID}" != "null" ]]; then
+            gh api "repos/${REPO}/issues/comments/${EXISTING_COMMENT_ID}" \
+              --method PATCH \
+              --field body=@/tmp/controller_state_comment.md
+            echo "📝 Updated controller state comment (id: ${EXISTING_COMMENT_ID})"
+          else
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --field body=@/tmp/controller_state_comment.md
+            echo "📝 Created controller state comment on PR #${PR_NUMBER}"
+          fi
+
+      - name: Auto-approve pending workflows on Copilot PRs
+        if: >-
+          steps.find_pr.outputs.skip != 'true' &&
+          steps.check_limit.outputs.exceeded != 'true'
+        run: |
+          set -euo pipefail
+
+          echo "ℹ️  Auto-approval of workflow runs has been disabled for security reasons."
