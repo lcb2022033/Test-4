@@ -3,7 +3,7 @@ name: trigger-copilot-on-dependabot-failure
 on:
   workflow_run:
     workflows: ["Tests"]
-  COPILOT_MARKER: "<!-- copilot-fix-attempt-v2 -->"
+    # COPILOT_MARKER: "<!-- copilot-fix-attempt-v2 -->"
     branches:
       - 'dependabot/**'
 
