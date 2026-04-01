@@ -583,13 +583,7 @@ jobs:
           if [[ -f /tmp/current_metrics.json ]]; then
             SIGS=$(jq -r '.error_signatures[]' /tmp/current_metrics.json 2>/dev/null || echo '')
             if [[ -n "${SIGS:-}" ]]; then
-              SIGS_SECTION=$(cat <<'SIGS_BLOCK'
-              ```
-              REPLACE_SIGS
-              ```
-              SIGS_BLOCK
-              )
-              SIGS_SECTION=${SIGS_SECTION/REPLACE_SIGS/${SIGS}}
+              SIGS_SECTION=$(printf '```\n%s\n```\n' "${SIGS}")
             fi
           fi
 
@@ -602,16 +596,14 @@ jobs:
 
           # Build previous attempts table section
           if [[ "${HAS_PREVIOUS}" == "true" && -n "${PREV_FAILED_JOB_COUNT:-}" ]]; then
-            PREV_SECTION=$(cat <<'METRICS_BLOCK'
-            | Metric | Previous (Attempt #PREV_ATTEMPT) | Current (Attempt #CURR_ATTEMPT) | Change |
-            |--------|---------|---------|--------|
-            | Failed jobs | PREV_JOBS | CURR_JOBS | JOB_CHANGE |
-            | Error signatures | PREV_SIGS | CURR_SIGS | SIG_CHANGE |
-            | Stall streak | — | CURR_STALL / MAX_STALL | STALL_CHANGE |
-
-            If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt.
-            METRICS_BLOCK
-            )
+            PREV_SECTION=$(printf '%s\n' \
+              "| Metric | Previous (Attempt #PREV_ATTEMPT) | Current (Attempt #CURR_ATTEMPT) | Change |" \
+              "|--------|---------|---------|--------|" \
+              "| Failed jobs | PREV_JOBS | CURR_JOBS | JOB_CHANGE |" \
+              "| Error signatures | PREV_SIGS | CURR_SIGS | SIG_CHANGE |" \
+              "| Stall streak | — | CURR_STALL / MAX_STALL | STALL_CHANGE |" \
+              "" \
+              "If no improvement, switch strategy; if stall streak meets the threshold, expect the escalated prompt.")
 
             JOB_CHANGE="$(if [[ "${CURRENT_FAILED_JOB_COUNT}" -lt "${PREV_FAILED_JOB_COUNT}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_FAILED_JOB_COUNT}" -eq "${PREV_FAILED_JOB_COUNT}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi)"
             SIG_CHANGE="$(if [[ "${CURRENT_ERROR_SIG_COUNT}" -lt "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "✅ Improved"; elif [[ "${CURRENT_ERROR_SIG_COUNT}" -eq "${PREV_ERROR_SIG_COUNT:-0}" ]]; then echo "⚠️ No change"; else echo "❌ Regressed"; fi)"
