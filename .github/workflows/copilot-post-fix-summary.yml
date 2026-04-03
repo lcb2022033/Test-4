@@ -185,52 +185,7 @@ jobs:
           FIX_PR_COUNT=$(echo "${FIX_PRS}" | jq 'length')
           echo "fix_pr_count=${FIX_PR_COUNT}" >> "$GITHUB_OUTPUT"
 
-          # ── 4e: Extract error signatures from the last trigger comment ──
-          LAST_TRIGGER=$(
-            gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --jq "[.[] | select(.body | startswith(\"${COPILOT_MARKER}\"))] | last // empty | .body" \
-            || echo ''
-          )
-
-          # Extract error signatures block from the last trigger comment
-          LAST_ERRORS=""
-          if [[ -n "${LAST_TRIGGER:-}" ]]; then
-            LAST_ERRORS=$(echo "${LAST_TRIGGER}" | sed -n '/Detected error signatures/,/```/{/```/!p}' | sed '/Detected error signatures/d' || echo '')
-          fi
-
-          if [[ -n "${LAST_ERRORS:-}" ]]; then
-            echo "${LAST_ERRORS}" > /tmp/last_errors.txt
-          else
-            echo "No error signatures captured." > /tmp/last_errors.txt
-          fi
-
-          # ── 4f: Extract failed jobs from the last trigger comment ──
-          LAST_FAILED_JOBS=""
-          if [[ -n "${LAST_TRIGGER:-}" ]]; then
-            LAST_FAILED_JOBS=$(echo "${LAST_TRIGGER}" | sed -n '/Failed jobs:/,/```/{/```/!p}' | sed '/Failed jobs:/d' | head -50 || echo '')
-          fi
-
-          if [[ -n "${LAST_FAILED_JOBS:-}" ]]; then
-            echo "${LAST_FAILED_JOBS}" > /tmp/last_failed_jobs.txt
-          else
-            echo "No failed jobs data captured." > /tmp/last_failed_jobs.txt
-          fi
-
-          # ── 4g: Fetch Copilot progress checklist (what Copilot reported doing) ──
-          PROGRESS_BODY=$(
-            gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --jq "[.[] | select(.body | contains(\"${COPILOT_PROGRESS_MARKER}\"))] | last // empty | .body" \
-            || echo ''
-          )
-
-          if [[ -n "${PROGRESS_BODY:-}" ]]; then
-            echo "${PROGRESS_BODY}" > /tmp/progress_checklist.md
-            echo "has_progress=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_progress=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # ── 4h: Collect files changed across all fix PRs ──
+          # ── 4e: Collect files changed across all fix PRs ──
           ALL_CHANGED_FILES="[]"
           while read -r FIX_PR_NUM; do
             [[ -z "${FIX_PR_NUM:-}" || "${FIX_PR_NUM}" == "null" ]] && continue
@@ -263,7 +218,6 @@ jobs:
           FINAL_ERROR_SIGS: ${{ steps.gather.outputs.final_error_sigs }}
           FINAL_STALL_STREAK: ${{ steps.gather.outputs.final_stall_streak }}
           HAS_GEM_SUMMARY: ${{ steps.gather.outputs.has_gem_summary }}
-          HAS_PROGRESS: ${{ steps.gather.outputs.has_progress }}
           FIX_PR_COUNT: ${{ steps.gather.outputs.fix_pr_count }}
           TOTAL_FILES_CHANGED: ${{ steps.gather.outputs.total_files_changed }}
           RUN_CONCLUSION: ${{ steps.gather.outputs.run_conclusion }}
@@ -365,62 +319,6 @@ jobs:
           ---
 
           GEM_EOF
-          fi
-
-          # ── Append last known errors ──
-          if [[ -f /tmp/last_errors.txt ]]; then
-            ERRORS_CONTENT=$(cat /tmp/last_errors.txt)
-            if [[ -n "${ERRORS_CONTENT:-}" && "${ERRORS_CONTENT}" != "No error signatures captured." ]]; then
-              cat >> /tmp/summary_comment.md <<ERRORS_EOF
-
-          ### 🐛 Error Signatures (from last failing attempt)
-
-          These were the deduplicated error signatures from the last CI failure before the fix:
-
-          \`\`\`
-          ${ERRORS_CONTENT}
-          \`\`\`
-
-          ---
-
-          ERRORS_EOF
-            fi
-          fi
-
-          # ── Append last failed jobs ──
-          if [[ -f /tmp/last_failed_jobs.txt ]]; then
-            JOBS_CONTENT=$(cat /tmp/last_failed_jobs.txt)
-            if [[ -n "${JOBS_CONTENT:-}" && "${JOBS_CONTENT}" != "No failed jobs data captured." ]]; then
-              cat >> /tmp/summary_comment.md <<JOBS_EOF
-
-          ### 🏗️ Failed Jobs (from last failing attempt)
-
-          \`\`\`json
-          ${JOBS_CONTENT}
-          \`\`\`
-
-          ---
-
-          JOBS_EOF
-            fi
-          fi
-
-          # ── Append Copilot's own progress notes ──
-          if [[ "${HAS_PROGRESS}" == "true" && -f /tmp/progress_checklist.md ]]; then
-            cat >> /tmp/summary_comment.md <<PROGRESS_EOF
-
-          ### 🤖 Copilot's Progress Notes
-
-          <details>
-          <summary>Click to expand Copilot's self-reported progress checklist</summary>
-
-          $(cat /tmp/progress_checklist.md)
-
-          </details>
-
-          ---
-
-          PROGRESS_EOF
           fi
 
           # ── Append experiment data JSON block ──
