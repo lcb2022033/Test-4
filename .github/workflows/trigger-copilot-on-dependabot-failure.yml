@@ -545,9 +545,8 @@ jobs:
 
           if [[ "${ATTEMPT}" -eq 1 ]]; then
             HEADER="## 🤖 Copilot: Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
-            CONTEXT="This is the **first** automated fix attempt. Keep changes minimal and focused only on making CI green.
-
-          **Constraints**
+            CONTEXT="This is the **first** automated fix attempt. Keep changes minimal and focused only on making CI green."
+            CONSTRAINTS_BLOCK="### Constraints
           - Do not modify more than 10 files.
           - Do not add or remove gems; adapt code/tests to the Dependabot versions.
           - Do not downgrade dependencies.
@@ -555,9 +554,8 @@ jobs:
 
           elif [[ "${STALL_STREAK}" -ge "${MAX_STALL_ATTEMPTS}" ]]; then
             HEADER="## 🚩 Escalated Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
-            CONTEXT="**Stall streak ${STALL_STREAK}/${MAX_STALL_ATTEMPTS}: no improvement in failed jobs/error signatures. Change strategy now.** Stop editing the same spots; follow stack traces and gem migration notes. Be surgical (≤8 files) and avoid repeating prior edits.
-
-          **Constraints (escalated)**
+            CONTEXT="**Stall streak ${STALL_STREAK}/${MAX_STALL_ATTEMPTS}: no improvement in failed jobs/error signatures. Change strategy now.** Stop editing the same spots; follow stack traces and gem migration notes. Be surgical (≤8 files) and avoid repeating prior edits."
+            CONSTRAINTS_BLOCK="### Constraints (escalated)
           - Do not modify more than 8 files.
           - Do not add or remove gems; adapt code/tests to the Dependabot versions.
           - Do not downgrade dependencies.
@@ -566,9 +564,8 @@ jobs:
 
           else
             HEADER="## 🔄 Copilot: Retry Fix CI Failures (Attempt #${ATTEMPT} of ${MAX_COPILOT_RETRIES})"
-            CONTEXT="Previous fixes did not make CI green. Read prior Copilot PRs/comments, avoid repeating the same edits, review upgraded gems' changelogs, and trace the full stack to find the root cause.
-
-          **Constraints**
+            CONTEXT="Previous fixes did not make CI green. Read prior Copilot PRs/comments, avoid repeating the same edits, review upgraded gems' changelogs, and trace the full stack to find the root cause."
+            CONSTRAINTS_BLOCK="### Constraints
           - Do not modify more than 10 files.
           - Do not add or remove gems; adapt code/tests to the Dependabot versions.
           - Do not downgrade dependencies.
@@ -652,6 +649,8 @@ jobs:
 
           ### Detected Error Signatures (deduplicated)
           ${SIGS_SECTION}
+
+          ${CONSTRAINTS_BLOCK}
 
           ### What Changed in This Attempt
           - Summarize the code/config/test changes you apply in this attempt.
