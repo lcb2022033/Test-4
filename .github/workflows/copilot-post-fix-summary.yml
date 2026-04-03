@@ -357,20 +357,10 @@ jobs:
           DATA_EOF
 
           # ── Post the summary comment ──
-          # Upsert: update existing summary if present, else create
-          EXISTING_ID=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-            --jq "[.[] | select(.body | contains(\"${SUMMARY_MARKER}\"))] | last // empty | .id" 2>/dev/null || echo "")
-
-          if [[ -n "${EXISTING_ID:-}" && "${EXISTING_ID}" != "null" ]]; then
-            gh api "repos/${REPO}/issues/comments/${EXISTING_ID}" \
-              --method PATCH \
-              --field body=@/tmp/summary_comment.md
-            echo "✅ Updated fix summary on PR #${PR_NUMBER}"
-          else
-            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --field body=@/tmp/summary_comment.md
-            echo "✅ Posted fix summary on PR #${PR_NUMBER}"
-          fi
+          # Always create a new summary comment (one per run/attempt)
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --field body=@/tmp/summary_comment.md
+          echo "✅ Posted new fix summary on PR #${PR_NUMBER}"
 
       # ── Step 6: Add summary label ─────────────────────────────
       - name: Add summary label
