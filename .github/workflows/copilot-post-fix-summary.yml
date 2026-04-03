@@ -152,7 +152,7 @@ jobs:
           # ── 4c: Fetch gem change summary ──
           GEM_SUMMARY=$(
             gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --jq '[.[] | select(.body | contains("## Dependency change summary"))] | last // empty | .body' \
+              --jq '[.[] | select(.body | startswith("## Dependency change summary"))] | last // empty | .body' \
             || echo ''
           )
 
