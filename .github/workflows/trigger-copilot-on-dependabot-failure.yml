@@ -3,7 +3,7 @@ name: trigger-copilot-on-dependabot-failure
 on:
   workflow_run:
     workflows: ["Tests"]
-    # COPILOT_MARKER: "<!-- copilot-fix-attempt-v2 -->"
+    types: [completed]
     branches:
       - 'dependabot/**'
 
@@ -12,10 +12,10 @@ permissions: {}
 env:
   MAX_COPILOT_RETRIES: "6"
   MAX_STALL_ATTEMPTS: "3"
-  COPILOT_MARKER: ""
-  COPILOT_PROGRESS_MARKER: ""
-  MAX_REACHED_MARKER: ""
-  CONTROLLER_STATE_MARKER: ""
+  COPILOT_MARKER: "<!-- copilot-fix-attempt-v2 -->"
+  COPILOT_PROGRESS_MARKER: "<!-- copilot-fix-progress -->"
+  MAX_REACHED_MARKER: "<!-- copilot-fix-max-reached -->"
+  CONTROLLER_STATE_MARKER: "<!-- copilot-controller-state -->"
 
 concurrency:
   group: copilot-fix-${{ github.event.workflow_run.head_branch }}
