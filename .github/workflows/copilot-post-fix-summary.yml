@@ -149,19 +149,7 @@ jobs:
           echo "final_error_sigs=${FINAL_ERROR_SIGS}" >> "$GITHUB_OUTPUT"
           echo "final_stall_streak=${FINAL_STALL_STREAK}" >> "$GITHUB_OUTPUT"
 
-          # ── 4c: Fetch gem change summary ──
-          GEM_SUMMARY=$(
-            gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              --jq '[.[] | select(.body | startswith("## Dependency change summary"))] | last // empty | .body' \
-            || echo ''
-          )
-
-          if [[ -n "${GEM_SUMMARY:-}" ]]; then
-            echo "${GEM_SUMMARY}" > /tmp/gem_summary.md
-            echo "has_gem_summary=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_gem_summary=false" >> "$GITHUB_OUTPUT"
-          fi
+          
 
           # ── 4d: Find all Copilot fix PRs that targeted this branch ──
           # These are PRs where base branch = dependabot branch and author is copilot or title matches
