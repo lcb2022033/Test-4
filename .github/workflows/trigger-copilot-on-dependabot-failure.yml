@@ -736,6 +736,10 @@ jobs:
             --method POST \
             --input - <<< '{"labels":["copilot-ci-fix-requested"]}'
 
+          # If CI failed again and a new attempt is being triggered, this PR is not complete.
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/copilot-fix-complete" \
+            --method DELETE 2>/dev/null || true
+
       - name: Persist controller state
         if: >-
           steps.find_pr.outputs.skip != 'true' &&

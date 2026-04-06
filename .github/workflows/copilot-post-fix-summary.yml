@@ -366,13 +366,18 @@ jobs:
       - name: Add summary label
         if: >-
           steps.find_pr.outputs.skip != 'true' &&
-          steps.check_copilot.outputs.skip != 'true'
+          steps.check_copilot.outputs.skip != 'true' &&
+          github.event.workflow_run.conclusion == 'success'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_FOR_COPILOT }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr_number }}
         run: |
           set -euo pipefail
+
+          # Remove the in-progress label when a fix is complete (ignore if missing)
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/copilot-ci-fix-requested" \
+            --method DELETE 2>/dev/null || true
 
           # Ensure label exists
           gh api "repos/${REPO}/labels" \

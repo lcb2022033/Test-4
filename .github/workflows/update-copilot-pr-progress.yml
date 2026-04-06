@@ -4,7 +4,7 @@ name: Update Copilot PR Progress
 # This workflow tracks the progress of Copilot fix PRs that
 # target Dependabot branches, and keeps the PR description
 # up to date with a live checklist so you know exactly when
-# the PR is ready to merge.
+# the PR is ReadyForReview.
 #
 # Triggers:
 #   • When the "Tests" CI workflow starts running (in_progress)
@@ -150,7 +150,7 @@ jobs:
 
           if [[ "${FAILING_INT}" -eq 0 && "${PENDING_INT}" -eq 0 && "${TOTAL_INT}" -gt 0 ]]; then
             READY_EMOJI="✅"
-            READY_HEADER="Ready to Merge"
+            READY_HEADER="ReadyForReview"
             READY_MSG="All CI checks have passed. This PR can be merged into the Dependabot branch."
             MERGE_STEP="- [x] 🎉 Merge this PR into the Dependabot branch"
           elif [[ "${FAILING_INT}" -gt 0 ]]; then
@@ -253,8 +253,8 @@ jobs:
 
           echo "✅ Updated PR #${PR_NUMBER} — ${READY_EMOJI} ${READY_HEADER}"
 
-      # ── Step 4: Add 'Ready to merge' label when all checks pass ──
-      - name: Add 'Ready to merge' label
+      # ── Step 4: Add 'ReadyForReview' label when all checks pass ──
+      - name: Add 'ReadyForReview' label
         if: |
           steps.find_pr.outputs.skip != 'true' &&
           steps.checks.outputs.failing == '0' &&
@@ -270,7 +270,7 @@ jobs:
           # Ensure the label exists (idempotent)
           gh api "repos/${REPO}/labels" \
             --method POST \
-            --field name="Ready to merge ✅" \
+            --field name="ReadyForReview ✅" \
             --field color="0e8a16" \
             --field description="All CI checks passed — safe to merge" \
             2>/dev/null || true
@@ -278,12 +278,12 @@ jobs:
           # Add the label to the PR
           gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" \
             --method POST \
-            --input - <<< '{"labels":["Ready to merge ✅"]}'
+            --input - <<< '{"labels":["ReadyForReview ✅"]}'
 
-          echo "🏷️  Added 'Ready to merge ✅' label to PR #${PR_NUMBER}"
+          echo "🏷️  Added 'ReadyForReview ✅' label to PR #${PR_NUMBER}"
 
-      # ── Step 5: Remove 'Ready to merge' label if CI is not green ──
-      - name: Remove 'Ready to merge' label if CI is failing or pending
+      # ── Step 5: Remove 'ReadyForReview' label if CI is not green ──
+      - name: Remove 'ReadyForReview' label if CI is failing or pending
         if: |
           steps.find_pr.outputs.skip != 'true' &&
           (steps.checks.outputs.failing != '0' || steps.checks.outputs.pending != '0')
@@ -298,4 +298,4 @@ jobs:
           gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/Ready%20to%20merge%20%E2%9C%85" \
             --method DELETE 2>/dev/null || true
 
-          echo "🏷️  Removed 'Ready to merge ✅' label from PR #${PR_NUMBER} (if it existed)"
+          echo "🏷️  Removed 'ReadyForReview ✅' label from PR #${PR_NUMBER} (if it existed)"
