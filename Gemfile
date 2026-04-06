@@ -78,3 +78,5 @@ gem "chartkick", "~> 5.0"
 gem "groupdate", "~> 6.5"
 
 gem "devise", "~> 4.9"
+
+gem "minitest", "~> 5.1"
