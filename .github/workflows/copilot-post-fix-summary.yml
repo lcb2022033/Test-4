@@ -173,7 +173,27 @@ jobs:
           FIX_PR_COUNT=$(echo "${FIX_PRS}" | jq 'length')
           echo "fix_pr_count=${FIX_PR_COUNT}" >> "$GITHUB_OUTPUT"
 
-          # ── 4e: Collect files changed across all fix PRs ──
+          # ── 4e: Collect Copilot-authored direct commits on this Dependabot PR ──
+          COPILOT_DIRECT_COMMITS=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/commits?per_page=100" \
+            --jq '[.[] | select(
+              ((.author.login // "") | test("copilot"; "i")) or
+              ((.committer.login // "") | test("copilot"; "i")) or
+              ((.commit.author.name // "") | test("copilot"; "i")) or
+              ((.commit.committer.name // "") | test("copilot"; "i"))
+            ) | {
+              sha: (.sha[0:7]),
+              full_sha: .sha,
+              message: ((.commit.message // "") | split("\n")[0]),
+              url: (.html_url // ""),
+              author: (.author.login // .commit.author.name // "unknown"),
+              committed_at: (.commit.author.date // "")
+            }]' 2>/dev/null || echo '[]')
+
+          echo "${COPILOT_DIRECT_COMMITS}" > /tmp/copilot_direct_commits.json
+          DIRECT_COMMIT_COUNT=$(echo "${COPILOT_DIRECT_COMMITS}" | jq 'length')
+          echo "direct_commit_count=${DIRECT_COMMIT_COUNT}" >> "$GITHUB_OUTPUT"
+
+          # ── 4f: Collect files changed across all fix PRs ──
           CHANGED_FILES_SOURCE="none"
           ALL_CHANGED_FILES="[]"
           while read -r FIX_PR_NUM; do
@@ -192,14 +212,7 @@ jobs:
           # If no fix PR file list exists, try Copilot-authored direct commits
           # on the Dependabot PR branch.
           if [[ "${TOTAL_FILES_CHANGED}" -eq 0 ]]; then
-            COPILOT_COMMIT_SHAS=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/commits?per_page=100" \
-              --jq '.[] | select(
-                ((.author.login // "") | test("copilot"; "i")) or
-                ((.committer.login // "") | test("copilot"; "i")) or
-                ((.commit.author.name // "") | test("copilot"; "i")) or
-                ((.commit.committer.name // "") | test("copilot"; "i"))
-              ) | .sha' \
-              2>/dev/null || true)
+            COPILOT_COMMIT_SHAS=$(jq -r '.[].full_sha' /tmp/copilot_direct_commits.json 2>/dev/null || true)
 
             ALL_CHANGED_FILES="[]"
             if [[ -n "${COPILOT_COMMIT_SHAS:-}" ]]; then
@@ -272,11 +285,14 @@ jobs:
           FINAL_STALL_STREAK: ${{ steps.gather.outputs.final_stall_streak }}
           HAS_GEM_SUMMARY: ${{ steps.gather.outputs.has_gem_summary }}
           FIX_PR_COUNT: ${{ steps.gather.outputs.fix_pr_count }}
+          DIRECT_COMMIT_COUNT: ${{ steps.gather.outputs.direct_commit_count }}
           TOTAL_FILES_CHANGED: ${{ steps.gather.outputs.total_files_changed }}
           CHANGED_FILES_SOURCE: ${{ steps.gather.outputs.changed_files_source }}
           RUN_CONCLUSION: ${{ steps.gather.outputs.run_conclusion }}
         run: |
           set -euo pipefail
+
+          DIRECT_COMMIT_COUNT_INT=${DIRECT_COMMIT_COUNT:-0}
 
           # Determine outcome wording based on run conclusion
           if [[ "${RUN_CONCLUSION}" == "success" ]]; then
@@ -307,6 +323,34 @@ jobs:
                 (map("| [#\(.number)](\(.url)) | \(.title) | \(if .merged then "✅ Merged" elif .state == "open" then "🟡 Open" else "⚫ Closed" end) | \(.author) | \(.created_at | split("T")[0]) |") | join("\n"))
               end
             ' /tmp/fix_prs.json)
+          fi
+
+          # ── Build direct-commit table (for no-fix-PR flows) ──
+          DIRECT_COMMIT_TABLE=""
+          if [[ -f /tmp/copilot_direct_commits.json ]]; then
+            DIRECT_COMMIT_TABLE=$(jq -r '
+              if length == 0 then ""
+              else
+                "| Commit | Message | Author | Date |\n|--------|---------|--------|------|\n" +
+                (map("| [`\(.sha)`](\(.url)) | \(.message) | \(.author) | \(.committed_at | split("T")[0]) |") | join("\n"))
+              end
+            ' /tmp/copilot_direct_commits.json)
+          fi
+
+          if [[ "${FIX_PR_COUNT}" -eq 0 && "${DIRECT_COMMIT_COUNT_INT}" -gt 0 ]]; then
+            FIX_PR_TABLE="No Copilot fix PRs found. Copilot committed directly to this Dependabot PR branch."
+          fi
+
+          COPILOT_DIRECT_COMMIT_SECTION=""
+          if [[ "${DIRECT_COMMIT_COUNT_INT}" -gt 0 ]]; then
+            COPILOT_DIRECT_COMMIT_SECTION=$(cat <<EOF
+          ### 🧩 Copilot Direct Commits (no fix PR)
+
+          ${DIRECT_COMMIT_TABLE}
+
+          ---
+          EOF
+            )
           fi
 
           # ── Build changed files table ──
@@ -401,6 +445,7 @@ jobs:
           | **Outcome** | ${OUTCOME} |
           | **Total Copilot attempts** | ${ATTEMPT_COUNT} |
           | **Fix PRs created** | ${FIX_PR_COUNT} |
+          | **Direct Copilot commits** | ${DIRECT_COMMIT_COUNT_INT} |
           | **Total files changed** | ${TOTAL_FILES_CHANGED} |
           | **Final stall streak** | ${FINAL_STALL_STREAK} |
           | **CI run** | [View](${RUN_URL}) |
@@ -421,6 +466,8 @@ jobs:
           ### 🔧 Copilot Fix PRs
 
           ${FIX_PR_TABLE}
+
+          ${COPILOT_DIRECT_COMMIT_SECTION}
 
           ---
 
