@@ -174,6 +174,7 @@ jobs:
           echo "fix_pr_count=${FIX_PR_COUNT}" >> "$GITHUB_OUTPUT"
 
           # ── 4e: Collect files changed across all fix PRs ──
+          CHANGED_FILES_SOURCE="fix_prs"
           ALL_CHANGED_FILES="[]"
           while read -r FIX_PR_NUM; do
             [[ -z "${FIX_PR_NUM:-}" || "${FIX_PR_NUM}" == "null" ]] && continue
@@ -183,8 +184,22 @@ jobs:
             ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" "${PR_FILES}" | jq -s 'add | unique_by(.filename)')
           done < <(echo "${FIX_PRS}" | jq -r '.[].number')
 
-          echo "${ALL_CHANGED_FILES}" > /tmp/all_changed_files.json
           TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
+
+          # If Copilot committed directly to the Dependabot branch (no fix PRs),
+          # fall back to files changed on the Dependabot PR itself.
+          if [[ "${TOTAL_FILES_CHANGED}" -eq 0 ]]; then
+            ALL_CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" \
+              --jq '[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions}]' \
+              2>/dev/null || echo '[]')
+            TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
+            if [[ "${TOTAL_FILES_CHANGED}" -gt 0 ]]; then
+              CHANGED_FILES_SOURCE="dependabot_pr"
+            fi
+          fi
+
+          echo "${ALL_CHANGED_FILES}" > /tmp/all_changed_files.json
+          echo "changed_files_source=${CHANGED_FILES_SOURCE}" >> "$GITHUB_OUTPUT"
           echo "total_files_changed=${TOTAL_FILES_CHANGED}" >> "$GITHUB_OUTPUT"
 
       # ── Step 5: Build & post the summary ──────────────────────
@@ -208,6 +223,7 @@ jobs:
           HAS_GEM_SUMMARY: ${{ steps.gather.outputs.has_gem_summary }}
           FIX_PR_COUNT: ${{ steps.gather.outputs.fix_pr_count }}
           TOTAL_FILES_CHANGED: ${{ steps.gather.outputs.total_files_changed }}
+          CHANGED_FILES_SOURCE: ${{ steps.gather.outputs.changed_files_source }}
           RUN_CONCLUSION: ${{ steps.gather.outputs.run_conclusion }}
         run: |
           set -euo pipefail
@@ -219,6 +235,12 @@ jobs:
           else
             OUTCOME="❌ CI is still failing"
             OUTCOME_EMOJI="❌"
+          fi
+
+          if [[ "${CHANGED_FILES_SOURCE}" == "dependabot_pr" ]]; then
+            CHANGED_FILES_HEADING="### 📁 Files Changed on Dependabot PR (fallback when no Copilot fix PR exists)"
+          else
+            CHANGED_FILES_HEADING="### 📁 All Files Changed Across Fix PRs"
           fi
 
           # ── Build fix PR table ──
@@ -288,7 +310,7 @@ jobs:
 
           ---
 
-          ### 📁 All Files Changed Across Fix PRs
+          ${CHANGED_FILES_HEADING}
 
           ${CHANGED_FILES_TABLE}
 
