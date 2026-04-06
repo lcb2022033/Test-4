@@ -179,9 +179,9 @@ jobs:
           while read -r FIX_PR_NUM; do
             [[ -z "${FIX_PR_NUM:-}" || "${FIX_PR_NUM}" == "null" ]] && continue
             PR_FILES=$(gh api "repos/${REPO}/pulls/${FIX_PR_NUM}/files" \
-              --jq '[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions}]' \
+              --jq '[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, patch: (.patch // "")}]' \
               2>/dev/null || echo '[]')
-            ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" "${PR_FILES}" | jq -s 'add | unique_by(.filename)')
+            ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" "${PR_FILES}" | jq -s 'add')
           done < <(echo "${FIX_PRS}" | jq -r '.[].number')
 
           TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
@@ -206,21 +206,10 @@ jobs:
               while read -r COMMIT_SHA; do
                 [[ -z "${COMMIT_SHA:-}" ]] && continue
                 COMMIT_FILES=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}" \
-                  --jq '[.files[]? | {filename: .filename, status: .status, additions: .additions, deletions: .deletions}]' \
+                  --jq '[.files[]? | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, patch: (.patch // "")}]' \
                   2>/dev/null || echo '[]')
                 ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" "${COMMIT_FILES}" | jq -s 'add')
               done <<< "${COPILOT_COMMIT_SHAS}"
-
-              ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" | jq '
-                group_by(.filename)
-                | map({
-                    filename: .[0].filename,
-                    status: .[-1].status,
-                    additions: (map(.additions) | add),
-                    deletions: (map(.deletions) | add)
-                  })
-                | sort_by(.filename)
-              ' 2>/dev/null || echo '[]')
             fi
 
             TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
@@ -233,13 +222,31 @@ jobs:
           # This can include non-Copilot changes from the dependency bump itself.
           if [[ "${TOTAL_FILES_CHANGED}" -eq 0 ]]; then
             ALL_CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" \
-              --jq '[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions}]' \
+              --jq '[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, patch: (.patch // "")}]' \
               2>/dev/null || echo '[]')
             TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
             if [[ "${TOTAL_FILES_CHANGED}" -gt 0 ]]; then
               CHANGED_FILES_SOURCE="dependabot_pr"
             fi
           fi
+
+          # Normalize/merge by file so metrics and patch excerpts are stable.
+          ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" | jq '
+            if type == "array" then
+              sort_by(.filename)
+              | group_by(.filename)
+              | map({
+                  filename: .[0].filename,
+                  status: .[-1].status,
+                  additions: (map(.additions // 0) | add),
+                  deletions: (map(.deletions // 0) | add),
+                  patch: ((map(.patch // "") | reverse | map(select(length > 0)) | .[0]) // "")
+                })
+            else []
+            end
+          ' 2>/dev/null || echo '[]')
+
+          TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
 
           echo "${ALL_CHANGED_FILES}" > /tmp/all_changed_files.json
           echo "changed_files_source=${CHANGED_FILES_SOURCE}" >> "$GITHUB_OUTPUT"
@@ -314,6 +321,66 @@ jobs:
             ' /tmp/all_changed_files.json)
           fi
 
+          # ── Build line-level file change excerpts for dropdown ──
+          CHANGED_FILES_PATCH_BODY="No line-level file changes available."
+          if [[ -f /tmp/all_changed_files.json ]]; then
+            python3 <<'PYEOF'
+          import json
+
+          MAX_FILES = 20
+          MAX_PATCH_LINES = 120
+          MAX_PATCH_CHARS = 6000
+
+          try:
+              with open('/tmp/all_changed_files.json', 'r', encoding='utf-8') as f:
+                  files = json.load(f)
+          except Exception:
+              files = []
+
+          if not isinstance(files, list):
+              files = []
+
+          parts = []
+          if not files:
+              parts.append("No line-level file changes available.")
+          else:
+              for file_obj in files[:MAX_FILES]:
+                  name = file_obj.get('filename', '(unknown file)')
+                  status = file_obj.get('status', 'unknown')
+                  adds = file_obj.get('additions', 0)
+                  dels = file_obj.get('deletions', 0)
+                  patch = (file_obj.get('patch') or '').rstrip()
+
+                  parts.append(f"#### {name} ({status}, +{adds} / -{dels})")
+                  if patch:
+                      truncated = False
+                      snippet = patch
+                      if len(snippet) > MAX_PATCH_CHARS:
+                          snippet = snippet[:MAX_PATCH_CHARS].rstrip() + "\n... [truncated]"
+                          truncated = True
+
+                      lines = snippet.splitlines()
+                      if len(lines) > MAX_PATCH_LINES:
+                          snippet = "\n".join(lines[:MAX_PATCH_LINES]) + "\n... [truncated]"
+                          truncated = True
+
+                      parts.append("```diff")
+                      parts.append(snippet)
+                      parts.append("```")
+                      if truncated:
+                          parts.append("_Patch excerpt truncated for comment size._")
+                  else:
+                      parts.append("_Patch unavailable from GitHub API (often large or binary files)._")
+
+              if len(files) > MAX_FILES:
+                  parts.append(f"_Showing first {MAX_FILES} of {len(files)} changed files._")
+
+          with open('/tmp/changed_files_patch_body.md', 'w', encoding='utf-8') as f:
+              f.write("\n\n".join(parts).strip() + "\n")
+          PYEOF
+            CHANGED_FILES_PATCH_BODY=$(cat /tmp/changed_files_patch_body.md)
+          fi
+
           # ── Determine outcome ──
           # ── Build the summary comment ──
           cat > /tmp/summary_comment.md <<SUMMARY_EOF
@@ -357,10 +424,16 @@ jobs:
 
           ---
 
-          <details>
-          <summary>${CHANGED_FILES_SUMMARY_TEXT}</summary>
+          ### 📁 File Change Metrics
+
+          _Source: ${CHANGED_FILES_SUMMARY_TEXT}_
 
           ${CHANGED_FILES_TABLE}
+
+          <details>
+          <summary>🧾 Working Tree File Changes (line-level excerpts)</summary>
+
+          ${CHANGED_FILES_PATCH_BODY}
           </details>
 
           ---
