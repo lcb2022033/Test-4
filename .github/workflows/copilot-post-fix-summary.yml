@@ -174,7 +174,7 @@ jobs:
           echo "fix_pr_count=${FIX_PR_COUNT}" >> "$GITHUB_OUTPUT"
 
           # ── 4e: Collect files changed across all fix PRs ──
-          CHANGED_FILES_SOURCE="fix_prs"
+          CHANGED_FILES_SOURCE="none"
           ALL_CHANGED_FILES="[]"
           while read -r FIX_PR_NUM; do
             [[ -z "${FIX_PR_NUM:-}" || "${FIX_PR_NUM}" == "null" ]] && continue
@@ -185,9 +185,52 @@ jobs:
           done < <(echo "${FIX_PRS}" | jq -r '.[].number')
 
           TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
+          if [[ "${TOTAL_FILES_CHANGED}" -gt 0 ]]; then
+            CHANGED_FILES_SOURCE="fix_prs"
+          fi
 
-          # If Copilot committed directly to the Dependabot branch (no fix PRs),
-          # fall back to files changed on the Dependabot PR itself.
+          # If no fix PR file list exists, try Copilot-authored direct commits
+          # on the Dependabot PR branch.
+          if [[ "${TOTAL_FILES_CHANGED}" -eq 0 ]]; then
+            COPILOT_COMMIT_SHAS=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/commits?per_page=100" \
+              --jq '.[] | select(
+                ((.author.login // "") | test("copilot"; "i")) or
+                ((.committer.login // "") | test("copilot"; "i")) or
+                ((.commit.author.name // "") | test("copilot"; "i")) or
+                ((.commit.committer.name // "") | test("copilot"; "i"))
+              ) | .sha' \
+              2>/dev/null || true)
+
+            ALL_CHANGED_FILES="[]"
+            if [[ -n "${COPILOT_COMMIT_SHAS:-}" ]]; then
+              while read -r COMMIT_SHA; do
+                [[ -z "${COMMIT_SHA:-}" ]] && continue
+                COMMIT_FILES=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}" \
+                  --jq '[.files[]? | {filename: .filename, status: .status, additions: .additions, deletions: .deletions}]' \
+                  2>/dev/null || echo '[]')
+                ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" "${COMMIT_FILES}" | jq -s 'add')
+              done <<< "${COPILOT_COMMIT_SHAS}"
+
+              ALL_CHANGED_FILES=$(echo "${ALL_CHANGED_FILES}" | jq '
+                group_by(.filename)
+                | map({
+                    filename: .[0].filename,
+                    status: .[-1].status,
+                    additions: (map(.additions) | add),
+                    deletions: (map(.deletions) | add)
+                  })
+                | sort_by(.filename)
+              ' 2>/dev/null || echo '[]')
+            fi
+
+            TOTAL_FILES_CHANGED=$(echo "${ALL_CHANGED_FILES}" | jq 'length')
+            if [[ "${TOTAL_FILES_CHANGED}" -gt 0 ]]; then
+              CHANGED_FILES_SOURCE="copilot_direct_commits"
+            fi
+          fi
+
+          # Final fallback: use all files on the Dependabot PR.
+          # This can include non-Copilot changes from the dependency bump itself.
           if [[ "${TOTAL_FILES_CHANGED}" -eq 0 ]]; then
             ALL_CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" \
               --jq '[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions}]' \
@@ -237,10 +280,14 @@ jobs:
             OUTCOME_EMOJI="❌"
           fi
 
-          if [[ "${CHANGED_FILES_SOURCE}" == "dependabot_pr" ]]; then
-            CHANGED_FILES_HEADING="### 📁 Files Changed on Dependabot PR (fallback when no Copilot fix PR exists)"
+          if [[ "${CHANGED_FILES_SOURCE}" == "fix_prs" ]]; then
+            CHANGED_FILES_SUMMARY_TEXT="📁 All Files Changed Across Fix PRs"
+          elif [[ "${CHANGED_FILES_SOURCE}" == "copilot_direct_commits" ]]; then
+            CHANGED_FILES_SUMMARY_TEXT="📁 Files Changed by Copilot Direct Commits (no fix PR)"
+          elif [[ "${CHANGED_FILES_SOURCE}" == "dependabot_pr" ]]; then
+            CHANGED_FILES_SUMMARY_TEXT="📁 Files Changed on Dependabot PR (final fallback, may include non-Copilot changes)"
           else
-            CHANGED_FILES_HEADING="### 📁 All Files Changed Across Fix PRs"
+            CHANGED_FILES_SUMMARY_TEXT="📁 Changed Files"
           fi
 
           # ── Build fix PR table ──
@@ -310,9 +357,11 @@ jobs:
 
           ---
 
-          ${CHANGED_FILES_HEADING}
+          <details>
+          <summary>${CHANGED_FILES_SUMMARY_TEXT}</summary>
 
           ${CHANGED_FILES_TABLE}
+          </details>
 
           ---
 
